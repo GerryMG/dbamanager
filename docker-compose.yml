@@ -1,9 +1,13 @@
 name: dbamanager
 
+# Cada pieza puede vivir en otro servidor. Los perfiles de COMPOSE_PROFILES (.env) eligen qué se levanta aquí:
+#   oracle-local -> Oracle con la metadata (DBAMGR) y bases demo; sin él, METADATA_DSN apunta a tu Oracle
+#   keycloak     -> Keycloak incluido; sin él, KEYCLOAK_* apunta a tu Keycloak
 services:
   oracle:
     image: gvenzl/oracle-free:23-slim
     container_name: dbamanager-oracle
+    profiles: ["oracle-local"]
     environment:
       ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD}
       DBAMGR_PASSWORD: ${DBAMGR_PASSWORD}
@@ -52,10 +56,11 @@ services:
     container_name: dbamanager-backend
     env_file: .env
     environment:
-      METADATA_DSN: oracle:1521/FREEPDB1
+      METADATA_DSN: ${METADATA_DSN:-oracle:1521/FREEPDB1}
     depends_on:
       oracle:
         condition: service_healthy
+        required: false  # no se exige si la metadata está en un Oracle externo
       keycloak:
         condition: service_started
         required: false  # no se exige si se usa un Keycloak externo
@@ -66,11 +71,15 @@ services:
     build: ./frontend
     container_name: dbamanager-frontend
     environment:
+      # Dónde está el backend (si corre en otro servidor, su URL)
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
       KEYCLOAK_URL: ${KEYCLOAK_PUBLIC_URL}
       KEYCLOAK_REALM: ${KEYCLOAK_REALM:-dbamanager}
       KEYCLOAK_CLIENT: ${KEYCLOAK_CLIENT_ID:-dbamanager-web}
     depends_on:
-      - backend
+      backend:
+        condition: service_started
+        required: false  # no se exige si el backend corre en otro servidor
     ports:
       - "${FRONTEND_PORT:-8088}:80"
 

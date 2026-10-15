@@ -37,6 +37,30 @@ Usuarios demo (contraseña `Cambiar.123`, definidos en `docker/keycloak/realm-db
 | `luis.dba` | dba | aprobar/ejecutar solo en `VENTAS` y `BI_LECTOR` (alcance asignado) |
 | `ana.dev`, `pedro.bi` | solicitante | explorar y solicitar |
 
+## Despliegue por componentes (servidores separados)
+
+Cada pieza puede estar en un servidor distinto; nada depende de nombres internos de Docker si se configuran las URLs. `COMPOSE_PROFILES` (en `.env`) decide qué se levanta en cada servidor:
+
+| Componente | Local (por defecto) | En otro servidor |
+|---|---|---|
+| Metadata (`DBAMGR`) | perfil `oracle-local` | Quitar `oracle-local`, crear el usuario con `scripts/oracle/usuario_metadata.sql` y definir `METADATA_DSN=host:puerto/servicio` y `DBAMGR_PASSWORD`. Las tablas las crea el backend al arrancar. |
+| Keycloak | perfil `keycloak` | Quitar `keycloak` y configurar `KEYCLOAK_PUBLIC_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID`; `KEYCLOAK_INTERNAL_URL` vacío o la URL que vea el backend. |
+| Bases administradas | demo en el Oracle local | Siempre separadas: cada conexión tiene su host/puerto/servicio. Cuentas con `scripts/oracle/cuentas_servicio.sql`. |
+| Backend | servicio `backend` | Puede correr solo: `docker compose up -d backend` en su servidor. |
+| Frontend | servicio `frontend` | `BACKEND_URL=http://servidor-backend:8000`. |
+
+Con metadata propia usa `SEED_DEMO=false`, para no crear las conexiones demo.
+
+Ejemplo de servidor con solo backend y frontend:
+
+```bash
+COMPOSE_PROFILES= docker compose up -d backend frontend
+```
+
+En ese caso, `METADATA_DSN` y las variables de Keycloak deben apuntar a sus servidores.
+
+Probado con backend y frontend en redes distintas. La metadata estaba en otro Oracle (18c), Keycloak se accedió por su URL pública y la base administrada por IP: inicio de sesión, exploración, solicitud, aprobación, ejecución y gestión de roles funcionaron.
+
 ## Qué se puede solicitar (todo de forma visual)
 
 | Área | Operaciones |
