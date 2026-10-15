@@ -1,19 +1,21 @@
 name: dbamanager
 
-# Cada pieza puede vivir en otro servidor. Los perfiles de COMPOSE_PROFILES (.env) eligen qué se levanta aquí:
-#   oracle-local -> Oracle con la metadata (DBAMGR) y bases demo; sin él, METADATA_DSN apunta a tu Oracle
-#   keycloak     -> Keycloak incluido; sin él, KEYCLOAK_* apunta a tu Keycloak
+# Por defecto todo es externo: aquí solo corren backend y frontend; METADATA_DSN y KEYCLOAK_* apuntan a sus
+# servidores. Perfiles opcionales (COMPOSE_PROFILES en .env) para levantar piezas de demo en este servidor:
+#   oracle-local -> Oracle con la metadata (DBAMGR) y bases demo
+#   keycloak     -> Keycloak con realm y usuarios demo
+#   compat       -> Oracle 18c XE para pruebas de compatibilidad
 services:
   oracle:
     image: gvenzl/oracle-free:23-slim
     container_name: dbamanager-oracle
     profiles: ["oracle-local"]
     environment:
-      ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD}
-      DBAMGR_PASSWORD: ${DBAMGR_PASSWORD}
-      CATALOG_PASSWORD: ${CATALOG_PASSWORD}
-      EXECUTOR_PASSWORD: ${EXECUTOR_PASSWORD}
-      DEMO_PASSWORD: ${DEMO_PASSWORD}
+      ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD:-}
+      DBAMGR_PASSWORD: ${DBAMGR_PASSWORD:-}
+      CATALOG_PASSWORD: ${CATALOG_PASSWORD:-}
+      EXECUTOR_PASSWORD: ${EXECUTOR_PASSWORD:-}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
     ports:
       - "${ORACLE_PORT:-1521}:1521"
     volumes:
@@ -41,7 +43,7 @@ services:
       KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-dbamanager-backend}
       KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-}
       KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL}
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HEALTH_ENABLED: "true"
@@ -56,7 +58,7 @@ services:
     container_name: dbamanager-backend
     env_file: .env
     environment:
-      METADATA_DSN: ${METADATA_DSN:-oracle:1521/FREEPDB1}
+      METADATA_DSN: ${METADATA_DSN:?Define METADATA_DSN en .env (host:puerto/servicio de la metadata)}
     depends_on:
       oracle:
         condition: service_healthy
@@ -89,10 +91,10 @@ services:
     container_name: dbamanager-oracle18
     profiles: ["compat"]
     environment:
-      ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD}
-      CATALOG_PASSWORD: ${CATALOG_PASSWORD}
-      EXECUTOR_PASSWORD: ${EXECUTOR_PASSWORD}
-      DEMO_PASSWORD: ${DEMO_PASSWORD}
+      ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD:-}
+      CATALOG_PASSWORD: ${CATALOG_PASSWORD:-}
+      EXECUTOR_PASSWORD: ${EXECUTOR_PASSWORD:-}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
     ports:
       - "1522:1521"
     volumes:

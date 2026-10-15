@@ -4,32 +4,57 @@ Explorar **estructura** de bases de datos (nunca datos) y solicitar cambios — 
 
 ## Arquitectura
 
-| Servicio | Puerto | Descripción |
+En este servidor corren solo la app; todo lo demás es externo:
+
+| Componente | Dónde | Descripción |
 |---|---|---|
-| `frontend` | 8088 | React + Mantine, servido por nginx (proxy `/api` → backend) |
-| `backend` | 8000 | FastAPI (`/api/docs`), python-oracledb thin, SQLAlchemy + Alembic |
-| `keycloak` | 8180 | OIDC, realm `dbamanager` |
-| `oracle` | 1521 | Oracle 23ai Free |
+| `frontend` | este servidor, puerto 8088 | React + Mantine, servido por nginx (proxy `/api` → `BACKEND_URL`) |
+| `backend` | este servidor, puerto 8000 | FastAPI (`/api/docs`), python-oracledb thin, SQLAlchemy + Alembic |
+| Metadata | Oracle externo (`METADATA_DSN`) | Usuario **`DBAMGR`**, única dueña de la metadata (privilegios mínimos, sin `ANY`) |
+| Identidad | Keycloak/OIDC externo (`KEYCLOAK_*`) | Inicio de sesión y roles |
+| Bases administradas | sus propios servidores | Una conexión por base (host/puerto/servicio), dadas de alta en la app |
 
-Oracle local:
+Cada base administrada tiene dos cuentas (`scripts/oracle/cuentas_servicio.sql`):
 
-- `FREEPDB1` → esquema **`DBAMGR`**: única dueña de la metadata de la app (privilegios mínimos, sin `ANY`).
-- `DEVPDB` y `PRODPDB` → bases administradas de ejemplo (esquemas `VENTAS`, `RRHH`, `BI_LECTOR`), cada una con:
-  - `DBAMGR_CATALOG`: `CREATE SESSION` + `SELECT_CATALOG_ROLE`. Solo diccionario; no puede leer datos.
-  - `DBAMGR_EXEC`: privilegios `ANY` de DDL (más `READ ANY TABLE`, requerido por Oracle para crear vistas/logs materializados sobre tablas de otros esquemas). Solo se usa para ejecutar solicitudes **aprobadas** y confirmadas; nunca para explorar.
+- `DBAMGR_CATALOG`: `CREATE SESSION` + `SELECT_CATALOG_ROLE`. Solo diccionario; no puede leer datos.
+- `DBAMGR_EXEC`: privilegios `ANY` de DDL (más `READ ANY TABLE`, que Oracle requiere para crear vistas o logs materializados sobre tablas de otros esquemas). Solo se usa para ejecutar solicitudes **aprobadas** y confirmadas; nunca para explorar.
 
-Cada conexión es independiente (host/puerto/servicio propios), así que puede apuntar a servidores distintos. Para agregar otro motor se implementa `EngineAdapter` (`backend/app/engines/base.py`) y se registra en `engines/__init__.py`.
+Para agregar otro motor se implementa `EngineAdapter` (`backend/app/engines/base.py`) y se registra en `engines/__init__.py`.
 
-## Arranque
+## Arranque (todo externo, modo por defecto)
 
-```bash
-cp .env.example .env    # y cambiar contraseñas / SECRETS_KEY / KEYCLOAK_PUBLIC_URL
-docker compose up -d --build
-```
+En este servidor solo corren el **backend** y el **frontend**. La metadata, Keycloak y las bases administradas están en sus propios servidores.
 
-`KEYCLOAK_PUBLIC_URL` debe ser la URL con la que el navegador llega a Keycloak (es el *issuer* de los tokens). App: `http://<host>:8088`.
+1. **Metadata:** en un Oracle 12.1+, como SYSDBA, ejecuta `scripts/oracle/usuario_metadata.sql`. Crea el usuario `DBAMGR`; las tablas las crea el backend al arrancar.
+2. **Keycloak:** crea el realm, el cliente público y los 4 roles. Para asignar roles desde la app ejecuta `scripts/keycloak/configurar_cliente_admin.sh` con `KC_SETUP_URL`, `KC_SETUP_USER` y `KC_SETUP_PASS`. El cliente público necesita:
+   - *Standard flow* con PKCE S256.
+   - *Valid redirect URIs* y *Web origins* con la URL del frontend.
+   - Un *audience mapper* hacia sí mismo, o bien `OIDC_AUDIENCE=` vacío.
+3. **Bases administradas:** en cada una ejecuta `scripts/oracle/cuentas_servicio.sql`. Las conexiones se dan de alta después en Administración.
+4. **Configuración:**
 
-Usuarios demo (contraseña `Cambiar.123`, definidos en `docker/keycloak/realm-dbamanager.json`):
+   ```bash
+   cp .env.example .env
+   ```
+
+   Edita `METADATA_DSN`, `DBAMGR_PASSWORD`, `KEYCLOAK_PUBLIC_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_ADMIN_CLIENT_SECRET` y `SECRETS_KEY`.
+5. **Arranque:**
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+   Abre `http://<host>:8088`.
+
+Al arrancar, el backend **verifica los servidores externos** y lo muestra en `docker compose logs backend`:
+
+- `[OK]`: conexión a la metadata, issuer de Keycloak, llaves de firma y cuenta de servicio de roles.
+- `[ERROR]`: no hay metadata; el backend se detiene.
+- `[AVISO]`: algo de identidad no cuadra. Por ejemplo, si `KEYCLOAK_PUBLIC_URL` no coincide con el issuer real, los inicios de sesión fallarían.
+
+### Demo local completa (opcional)
+
+Para probar sin servidores externos, usa en `.env` el bloque "Demo local" de `.env.example` con `COMPOSE_PROFILES=oracle-local,keycloak`. Levanta un Oracle 23ai con la metadata y bases demo (DEVPDB, PRODPDB) y un Keycloak con estos usuarios demo (contraseña `Cambiar.123`, definidos en `docker/keycloak/realm-dbamanager.json`):
 
 | Usuario | Roles | Puede |
 |---|---|---|
@@ -43,8 +68,8 @@ Cada pieza puede estar en un servidor distinto; nada depende de nombres internos
 
 | Componente | Local (por defecto) | En otro servidor |
 |---|---|---|
-| Metadata (`DBAMGR`) | perfil `oracle-local` | Quitar `oracle-local`, crear el usuario con `scripts/oracle/usuario_metadata.sql` y definir `METADATA_DSN=host:puerto/servicio` y `DBAMGR_PASSWORD`. Las tablas las crea el backend al arrancar. |
-| Keycloak | perfil `keycloak` | Quitar `keycloak` y configurar `KEYCLOAK_PUBLIC_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID`; `KEYCLOAK_INTERNAL_URL` vacío o la URL que vea el backend. |
+| Metadata (`DBAMGR`) | perfil `oracle-local` (solo demo) | Quitar `oracle-local`, crear el usuario con `scripts/oracle/usuario_metadata.sql` y definir `METADATA_DSN=host:puerto/servicio` y `DBAMGR_PASSWORD`. Las tablas las crea el backend al arrancar. |
+| Keycloak | perfil `keycloak` (solo demo) | Quitar `keycloak` y configurar `KEYCLOAK_PUBLIC_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID`; `KEYCLOAK_INTERNAL_URL` vacío o la URL que vea el backend. |
 | Bases administradas | demo en el Oracle local | Siempre separadas: cada conexión tiene su host/puerto/servicio. Cuentas con `scripts/oracle/cuentas_servicio.sql`. |
 | Backend | servicio `backend` | Puede correr solo: `docker compose up -d backend` en su servidor. |
 | Frontend | servicio `frontend` | `BACKEND_URL=http://servidor-backend:8000`. |
