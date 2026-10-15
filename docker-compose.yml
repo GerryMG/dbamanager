@@ -1,0 +1,98 @@
+name: dbamanager
+
+services:
+  oracle:
+    image: gvenzl/oracle-free:23-slim
+    container_name: dbamanager-oracle
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD}
+      DBAMGR_PASSWORD: ${DBAMGR_PASSWORD}
+      CATALOG_PASSWORD: ${CATALOG_PASSWORD}
+      EXECUTOR_PASSWORD: ${EXECUTOR_PASSWORD}
+      DEMO_PASSWORD: ${DEMO_PASSWORD}
+    ports:
+      - "${ORACLE_PORT:-1521}:1521"
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./docker/oracle/init:/container-entrypoint-initdb.d:ro
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+
+  # Keycloak incluido (perfil "keycloak", activo por defecto con COMPOSE_PROFILES=keycloak en .env).
+  # Para un Keycloak corporativo existente: quitar el perfil y configurar KEYCLOAK_* en .env.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: dbamanager-keycloak
+    profiles: ["keycloak"]
+    command: ["start-dev", "--import-realm", "--http-port=8180"]
+    environment:
+      # Valores que usa el realm importado (placeholders ${...} en realm-dbamanager.json)
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-dbamanager}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-dbamanager-web}
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-dbamanager-backend}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "${KEYCLOAK_PORT:-8180}:8180"
+    volumes:
+      - ./docker/keycloak/realm-dbamanager.json:/opt/keycloak/data/import/realm-dbamanager.json:ro
+      - keycloak-data:/opt/keycloak/data
+
+  backend:
+    build: ./backend
+    container_name: dbamanager-backend
+    env_file: .env
+    environment:
+      METADATA_DSN: oracle:1521/FREEPDB1
+    depends_on:
+      oracle:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+        required: false  # no se exige si se usa un Keycloak externo
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+
+  frontend:
+    build: ./frontend
+    container_name: dbamanager-frontend
+    environment:
+      KEYCLOAK_URL: ${KEYCLOAK_PUBLIC_URL}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-dbamanager}
+      KEYCLOAK_CLIENT: ${KEYCLOAK_CLIENT_ID:-dbamanager-web}
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-8088}:80"
+
+  # Oracle 18c XE opcional para validar compatibilidad (12c+): docker compose --profile compat up -d oracle18
+  oracle18:
+    image: gvenzl/oracle-xe:18-slim
+    container_name: dbamanager-oracle18
+    profiles: ["compat"]
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD}
+      CATALOG_PASSWORD: ${CATALOG_PASSWORD}
+      EXECUTOR_PASSWORD: ${EXECUTOR_PASSWORD}
+      DEMO_PASSWORD: ${DEMO_PASSWORD}
+    ports:
+      - "1522:1521"
+    volumes:
+      - oracle18-data:/opt/oracle/oradata
+      - ./docker/oracle/init18:/container-entrypoint-initdb.d:ro
+      - ./scripts/oracle/cuentas_servicio.sql:/opt/dbamanager/cuentas_servicio.sql:ro
+      - ./docker/oracle/init/demo_schemas.sql.txt:/opt/dbamanager/demo_schemas.sql.txt:ro
+
+volumes:
+  oracle18-data:
+  oracle-data:
+  keycloak-data:

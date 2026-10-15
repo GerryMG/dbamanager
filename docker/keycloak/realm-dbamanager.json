@@ -1,0 +1,170 @@
+{
+  "realm": "${KEYCLOAK_REALM:dbamanager}",
+  "displayName": "DBA Manager",
+  "enabled": true,
+  "loginWithEmailAllowed": true,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "sslRequired": "none",
+  "internationalizationEnabled": true,
+  "supportedLocales": [
+    "es",
+    "en"
+  ],
+  "defaultLocale": "es",
+  "roles": {
+    "realm": [
+      {
+        "name": "solicitante",
+        "description": "Puede explorar estructuras y crear solicitudes"
+      },
+      {
+        "name": "dba",
+        "description": "DBA con alcance limitado a los esquemas que se le asignen en DBA Manager"
+      },
+      {
+        "name": "dba_admin",
+        "description": "DBA principal: aprueba y ejecuta cualquier solicitud"
+      },
+      {
+        "name": "admin",
+        "description": "Administra conexiones, proyectos, alcances y respaldos de metadata"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "${KEYCLOAK_CLIENT_ID:dbamanager-web}",
+      "name": "DBA Manager Web",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "implicitFlowEnabled": false,
+      "redirectUris": [
+        "*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "*"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-dbamanager",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "${KEYCLOAK_CLIENT_ID:dbamanager-web}",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "${KEYCLOAK_ADMIN_CLIENT_ID:dbamanager-backend}",
+      "name": "DBA Manager (administración de roles)",
+      "enabled": true,
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KEYCLOAK_ADMIN_CLIENT_SECRET}"
+    }
+  ],
+  "users": [
+    {
+      "username": "admin.dba",
+      "email": "admin.dba@example.com",
+      "firstName": "Carla",
+      "lastName": "Principal",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Cambiar.123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "solicitante",
+        "dba_admin",
+        "admin"
+      ]
+    },
+    {
+      "username": "luis.dba",
+      "email": "luis.dba@example.com",
+      "firstName": "Luis",
+      "lastName": "Ventas DBA",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Cambiar.123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "solicitante",
+        "dba"
+      ]
+    },
+    {
+      "username": "ana.dev",
+      "email": "ana.dev@example.com",
+      "firstName": "Ana",
+      "lastName": "Desarrollo",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Cambiar.123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "solicitante"
+      ]
+    },
+    {
+      "username": "pedro.bi",
+      "email": "pedro.bi@example.com",
+      "firstName": "Pedro",
+      "lastName": "Analista BI",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Cambiar.123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "solicitante"
+      ]
+    },
+    {
+      "username": "service-account-${KEYCLOAK_ADMIN_CLIENT_ID:dbamanager-backend}",
+      "enabled": true,
+      "serviceAccountClientId": "${KEYCLOAK_ADMIN_CLIENT_ID:dbamanager-backend}",
+      "clientRoles": {
+        "realm-management": [
+          "view-users",
+          "query-users",
+          "manage-users",
+          "view-clients"
+        ]
+      }
+    }
+  ]
+}
