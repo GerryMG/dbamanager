@@ -74,6 +74,12 @@ def import_metadata(db: Session, data: dict, replace: bool) -> dict:
             db.add(model(**_parse(model, row)))
         db.flush()
         counts[model.__tablename__] = len(rows)
+    # Seguridad: un respaldo editado no puede activar la ejecución a nadie. Tras restaurar, cada DBA
+    # debe volver a activarla para sí mismo.
+    from app.models import UserSetting
+
+    for row in db.scalars(select(UserSetting)).all():
+        row.can_execute = False
     _reset_identities(db)
     db.commit()
     return counts

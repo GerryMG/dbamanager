@@ -130,7 +130,7 @@ function ConnectionsAdmin() {
               <PasswordInput label="Contraseña ejecutora" description={edit?.id ? "Vacío = conservar la actual" : " "} value={f.exec_password} onChange={(e) => setF({ exec_password: e.currentTarget.value })} />
             </SimpleGrid>
             <Group>
-              <Switch label="Permitir ejecución desde DBA Manager" checked={f.allow_execution} disabled={!f.exec_user} onChange={(e) => setF({ allow_execution: e.currentTarget.checked })} />
+              <Switch label="Permitir ejecución desde DBA Manager" description="Además, cada DBA debe activarla para sí mismo" checked={f.allow_execution} disabled={!f.exec_user} onChange={(e) => setF({ allow_execution: e.currentTarget.checked })} />
               <NumberInput label="Aprobaciones requeridas" w={170} min={1} max={5} value={f.required_approvals} onChange={(v) => setF({ required_approvals: Number(v) })} />
               <Switch label="Activa" checked={f.active} onChange={(e) => setF({ active: e.currentTarget.checked })} />
             </Group>

@@ -278,7 +278,8 @@ function ReviewModal({ decision, onClose, onSubmit, busy }: { decision: null | "
 }
 
 function ExecuteModal({ opened, onClose, r, onDone }: { opened: boolean; onClose: () => void; r: RequestDetail; onDone: (d: RequestDetail, secrets?: Secret[]) => void }) {
-  const [mode, setMode] = useState<"AUTO" | "MANUAL">(r.permissions.auto_execute ? "AUTO" : "MANUAL");
+  const canAuto = r.permissions.auto_execute && r.permissions.self_execution;
+  const [mode, setMode] = useState<"AUTO" | "MANUAL">(canAuto ? "AUTO" : "MANUAL");
   const [code, setCode] = useState("");
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
@@ -312,10 +313,16 @@ function ExecuteModal({ opened, onClose, r, onDone }: { opened: boolean; onClose
     <Modal opened={opened} onClose={onClose} title={`Ejecutar ${r.code} en ${r.connection.name}`} size="xl">
       <Stack>
         <SegmentedControl value={mode} onChange={(v) => setMode(v as "AUTO" | "MANUAL")} data={[
-          { value: "AUTO", label: "Ejecutar desde DBA Manager", disabled: !r.permissions.auto_execute },
+          { value: "AUTO", label: "Ejecutar desde DBA Manager", disabled: !canAuto },
           { value: "MANUAL", label: "Ya lo ejecuté manualmente" },
         ]} />
         {!r.permissions.auto_execute && <Text size="xs" c="dimmed">Esta conexión no permite ejecución desde DBA Manager; descarga el script, ejecútalo y regístralo aquí.</Text>}
+        {r.permissions.auto_execute && !r.permissions.self_execution && (
+          <Text size="xs" c="dimmed">
+            Tienes desactivada la ejecución desde DBA Manager. Solo tú puedes activarla: menú de tu usuario → “Ejecución desde la app”.
+            Mientras tanto, descarga el script, ejecútalo y regístralo aquí.
+          </Text>
+        )}
         {mode === "AUTO" && (
           <Alert color={r.connection.environment === "PROD" ? "red" : "orange"} icon={<IconAlertTriangle />}>
             Se ejecutarán {pending.length} operación(es) con la cuenta privilegiada de <b>{r.connection.name}</b> ({r.connection.environment}).

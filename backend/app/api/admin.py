@@ -161,6 +161,7 @@ def list_users(db: Session = Depends(get_db), user: CurrentUser = Depends(requir
 @router.get("/identity")
 def identity_status(user: CurrentUser = Depends(require_admin)):
     """Configuración del proveedor de identidad y si la administración de roles está operativa."""
+    keycloak_admin.use_caller_token(user.access_token)
     return keycloak_admin.status()
 
 
@@ -168,6 +169,7 @@ def identity_status(user: CurrentUser = Depends(require_admin)):
 def idp_users(search: str | None = Query(None, max_length=100), first: int = Query(0, ge=0),
               limit: int = Query(50, ge=1, le=200), db: Session = Depends(get_db),
               user: CurrentUser = Depends(require_admin)):
+    keycloak_admin.use_caller_token(user.access_token)
     users = keycloak_admin.list_users(search, first, limit)
     scopes: dict[str, int] = {}
     for sc in db.scalars(select(ApproverScope)):
@@ -182,6 +184,7 @@ def idp_users(search: str | None = Query(None, max_length=100), first: int = Que
 @router.put("/idp-users/{user_id}/roles")
 def set_user_roles(user_id: str, data: RolesIn, db: Session = Depends(get_db),
                    user: CurrentUser = Depends(require_admin)):
+    keycloak_admin.use_caller_token(user.access_token)
     valid = set(get_settings().role_names)
     wanted = set(data.roles)
     if wanted - valid:

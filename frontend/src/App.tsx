@@ -2,11 +2,12 @@ import { ActionIcon, AppShell, Badge, Burger, Group, Menu, NavLink, Text, Title,
 import { useDisclosure } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
 import {
-  IconDatabase, IconFilePlus, IconHistory, IconListCheck, IconLogout, IconMoon, IconSettings, IconSun, IconUserCircle,
+  IconDatabase, IconFilePlus, IconPlayerPlay, IconHistory, IconListCheck, IconLogout, IconMoon, IconSettings, IconSun, IconUserCircle,
 } from "@tabler/icons-react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api, RequestSummary, useMe } from "./api";
 import { logout } from "./auth";
+import MyExecutionModal from "./components/MyExecutionModal";
 import AdminPage from "./pages/AdminPage";
 import AuditPage from "./pages/AuditPage";
 import ExplorerPage from "./pages/ExplorerPage";
@@ -16,6 +17,7 @@ import RequestsPage from "./pages/RequestsPage";
 
 export default function App() {
   const [opened, { toggle, close }] = useDisclosure();
+  const [execOpen, execModal] = useDisclosure();
   const { data: me } = useMe();
   const nav = useNavigate();
   const { pathname } = useLocation();
@@ -70,6 +72,12 @@ export default function App() {
                 <Menu.Item disabled>
                   {me?.roles.filter((r) => ["solicitante", "dba", "dba_admin", "admin"].includes(r)).join(", ")}
                 </Menu.Item>
+                {me?.is_dba && (
+                  <Menu.Item leftSection={<IconPlayerPlay size={16} />} onClick={execModal.open}
+                    rightSection={<Badge size="xs" color={me.can_execute ? "red" : "gray"} variant="light">{me.can_execute ? "activada" : "desactivada"}</Badge>}>
+                    Ejecución desde la app
+                  </Menu.Item>
+                )}
                 <Menu.Divider />
                 <Menu.Item leftSection={<IconLogout size={16} />} onClick={logout}>
                   Cerrar sesión
@@ -93,6 +101,7 @@ export default function App() {
         {me?.is_dba && link("/admin", "Administración", <IconSettings size={18} />)}
       </AppShell.Navbar>
 
+      {me && <MyExecutionModal opened={execOpen} onClose={execModal.close} me={me} />}
       <AppShell.Main>
         <Routes>
           <Route path="/" element={<ExplorerPage />} />

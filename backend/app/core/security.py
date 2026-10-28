@@ -35,6 +35,7 @@ class CurrentUser:
     email: str = ""
     roles: set[str] = field(default_factory=set)
     ip: str | None = None
+    access_token: str | None = field(default=None, repr=False)  # para administrar roles en modo token
 
     @property
     def is_admin(self) -> bool:
@@ -109,6 +110,7 @@ def get_current_user(
         email=claims.get("email", ""),
         roles=roles,
         ip=request.client.host if request.client else None,
+        access_token=creds.credentials,
     )
     _touch_user(db, user)
     return user

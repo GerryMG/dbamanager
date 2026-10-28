@@ -16,6 +16,7 @@ interface Identity {
   roles_client: string | null;
   role_names: Record<string, string>;
   management_enabled: boolean;
+  management_mode: string;
   management_ok: boolean;
   management_error: string | null;
   missing_roles: string[];
@@ -50,6 +51,9 @@ export function IdentityCard() {
         {id.management_ok ? <Badge color="green" leftSection={<IconShieldCheck size={12} />}>Administración de roles activa</Badge>
           : id.management_enabled ? <Badge color="red">Administración de roles con error</Badge>
           : <Badge color="gray">Roles solo desde Keycloak</Badge>}
+        {id.management_enabled && (
+          <Badge variant="outline" ml={6}>{id.management_mode === "token" ? "con tu usuario de Keycloak" : "con cuenta de servicio"}</Badge>
+        )}
       </Group>
       <SimpleGrid cols={{ base: 1, md: 2 }} spacing={4}>
         <Text size="sm">Issuer: <Code>{id.issuer}</Code></Text>
@@ -62,9 +66,15 @@ export function IdentityCard() {
       {id.missing_roles.length > 0 && <Alert color="orange" mt="sm" py={6}>Roles que no existen en Keycloak: {id.missing_roles.join(", ")}</Alert>}
       {!id.management_enabled && (
         <Alert color="blue" mt="sm" py={6}>
-          Para asignar roles desde DBA Manager define <Code>KEYCLOAK_ADMIN_CLIENT_ID</Code> y <Code>KEYCLOAK_ADMIN_CLIENT_SECRET</Code> en <Code>.env</Code> y
-          ejecuta <Code>scripts/keycloak/configurar_cliente_admin.sh</Code>. Mientras tanto, los roles se administran en la consola de Keycloak.
+          La asignación de roles desde DBA Manager está deshabilitada (<Code>KEYCLOAK_ROLES_ADMIN_MODE=off</Code>). Los roles se asignan en la consola de Keycloak.
         </Alert>
+      )}
+      {id.management_mode === "token" && id.management_error && (
+        <Text size="xs" c="dimmed" mt={4}>
+          En modo token, cada admin de DBA Manager usa su propio usuario de Keycloak: en Keycloak, en tu realm, asígnale los roles
+          <Code>view-users</Code>, <Code>query-users</Code> y <Code>manage-users</Code> del cliente <Code>realm-management</Code>
+          (Users → tu usuario → Role mapping → Assign role → Filter by clients). Después cierra sesión y vuelve a entrar.
+        </Text>
       )}
       <Text size="xs" c="dimmed" mt="xs">Todo esto se configura con variables de entorno (KEYCLOAK_*, OIDC_*, ROLE_*); ver README.</Text>
     </Card>
@@ -80,6 +90,7 @@ export default function UsersRolesAdmin() {
   const [edits, setEdits] = useState<Record<string, string[]>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const enabled = !!identity?.management_ok;
+  // en modo token los permisos los da el token del propio admin
   const { data: users, isLoading, error } = useQuery({
     queryKey: ["admin", "idp-users", dsearch],
     queryFn: () => api.get<IdpUser[]>(`/api/admin/idp-users?limit=100${dsearch ? `&search=${encodeURIComponent(dsearch)}` : ""}`),

@@ -27,6 +27,17 @@ class AppUser(Base):
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class UserSetting(Base):
+    """Preferencias que solo el propio usuario puede cambiar (no hay API para cambiarlas a otro)."""
+
+    __tablename__ = "user_settings"
+    username: Mapped[str] = mapped_column(String(150), primary_key=True)
+    # Ejecutar solicitudes desde DBA Manager con la cuenta privilegiada. Desactivado por defecto:
+    # solo el propio DBA puede activarlo para sí mismo.
+    can_execute: Mapped[bool] = mapped_column(Boolean, default=False)
+    can_execute_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class DbConnection(Base):
     """Base de datos administrada. Cada una puede estar en un servidor/motor distinto."""
 
@@ -178,6 +189,7 @@ class AuditLog(Base):
 
 ALL_TABLES_IN_ORDER = [
     AppUser,
+    UserSetting,
     DbConnection,
     Project,
     ApproverScope,

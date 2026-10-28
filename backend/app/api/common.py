@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -8,8 +9,23 @@ from app.engines import ENGINES
 from app.models import ApproverScope, DbConnection, Project
 from app.operations import DESTRUCTIVE_OPS, OBJECT_PRIVILEGES, OPERATION_LABELS, SYSTEM_PRIVILEGES
 from app.schemas import ConnectionOut
+from app.services import workflow
 
 router = APIRouter(prefix="/api", tags=["common"])
+
+
+class SelfExecutionIn(BaseModel):
+    enabled: bool
+    confirm: str = ""
+
+
+@router.put("/me/execution")
+def set_my_execution(data: SelfExecutionIn, db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_user)):
+    """Activa/desactiva la ejecución desde la app SOLO para el usuario que hace la petición."""
+    if data.enabled and data.confirm.strip().upper() != "ACTIVAR":
+        raise HTTPException(422, "Para activarla escribe ACTIVAR")
+    workflow.set_self_execution(db, user, data.enabled)
+    return {"can_execute": data.enabled}
 
 
 @router.get("/me")
@@ -20,6 +36,7 @@ def me(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_us
         "roles": sorted(user.roles), "is_admin": user.is_admin, "is_dba": user.is_dba,
         "is_dba_admin": user.is_dba_admin,
         "scopes": [{"connection_id": s.connection_id, "schema_name": s.schema_name} for s in scopes],
+        "can_execute": workflow.self_execution_enabled(db, user.username),
     }
 
 

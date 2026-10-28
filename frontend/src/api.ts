@@ -74,6 +74,7 @@ export interface Me {
   is_admin: boolean;
   is_dba: boolean;
   is_dba_admin: boolean;
+  can_execute: boolean;
   scopes: { connection_id: number; schema_name: string }[];
 }
 
@@ -313,7 +314,7 @@ export interface RequestDetail extends RequestSummary {
   comments: { id: number; author: string; body: string; created_at: string }[];
   executions: { id: number; executed_by: string; mode: string; status: string; log: string | null; notes: string | null; started_at: string; finished_at: string | null }[];
   required_approvals: number;
-  permissions: { edit: boolean; submit: boolean; cancel: boolean; review: boolean; execute: boolean; auto_execute: boolean; comment: boolean };
+  permissions: { edit: boolean; submit: boolean; cancel: boolean; review: boolean; execute: boolean; auto_execute: boolean; self_execution: boolean; comment: boolean };
   eligible_reviewers: string[];
 }
 

@@ -1,10 +1,12 @@
+import json
 import logging
 from contextlib import asynccontextmanager
 
 import oracledb
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api import admin, common, explorer, requests
 from app.core.config import get_settings
@@ -55,3 +57,32 @@ def health():
 
 for r in (common.router, explorer.router, requests.router, admin.router):
     app.include_router(r)
+
+
+# ---------------------------------------------------------------------- frontend (misma aplicación)
+@app.get("/config.js", include_in_schema=False)
+def frontend_config() -> Response:
+    """Configuración del navegador generada desde las variables de entorno (sin reconstruir el frontend)."""
+    s = get_settings()
+    cfg = {"keycloakUrl": s.keycloak_public_url.rstrip("/"), "keycloakRealm": s.keycloak_realm,
+           "keycloakClient": s.keycloak_client_id}
+    return Response(f"window.__CONFIG__ = {json.dumps(cfg)};", media_type="application/javascript",
+                    headers={"Cache-Control": "no-store"})
+
+
+_static = get_settings().static_path.resolve()
+if (_static / "index.html").exists():
+    if (_static / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=_static / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def spa(path: str) -> FileResponse:
+        if path.startswith("api/"):
+            raise HTTPException(404, "Ruta de API inexistente")
+        candidate = (_static / path).resolve()
+        if path and candidate.is_file() and _static in candidate.parents:
+            return FileResponse(candidate)
+        # Rutas del frontend (/requests/12, /admin, ...) -> index.html
+        return FileResponse(_static / "index.html", headers={"Cache-Control": "no-store"})
+else:
+    log.warning("Frontend no compilado en %s: solo se sirve la API", _static)

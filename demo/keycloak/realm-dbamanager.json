@@ -63,18 +63,6 @@
           }
         }
       ]
-    },
-    {
-      "clientId": "${KEYCLOAK_ADMIN_CLIENT_ID:dbamanager-backend}",
-      "name": "DBA Manager (administración de roles)",
-      "enabled": true,
-      "publicClient": false,
-      "serviceAccountsEnabled": true,
-      "standardFlowEnabled": false,
-      "directAccessGrantsEnabled": false,
-      "implicitFlowEnabled": false,
-      "clientAuthenticatorType": "client-secret",
-      "secret": "${KEYCLOAK_ADMIN_CLIENT_SECRET}"
     }
   ],
   "users": [
@@ -96,7 +84,14 @@
         "solicitante",
         "dba_admin",
         "admin"
-      ]
+      ],
+      "clientRoles": {
+        "realm-management": [
+          "view-users",
+          "query-users",
+          "manage-users"
+        ]
+      }
     },
     {
       "username": "luis.dba",
@@ -152,19 +147,6 @@
       "realmRoles": [
         "solicitante"
       ]
-    },
-    {
-      "username": "service-account-${KEYCLOAK_ADMIN_CLIENT_ID:dbamanager-backend}",
-      "enabled": true,
-      "serviceAccountClientId": "${KEYCLOAK_ADMIN_CLIENT_ID:dbamanager-backend}",
-      "clientRoles": {
-        "realm-management": [
-          "view-users",
-          "query-users",
-          "manage-users",
-          "view-clients"
-        ]
-      }
     }
   ]
 }

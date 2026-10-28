@@ -1,50 +1,78 @@
+"""Configuración: variables de entorno o archivo .env (en la raíz del proyecto o en backend/).
+
+Todas las variables están documentadas en .env.example.
+"""
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+ROOT = Path(__file__).resolve().parents[3]  # raíz del proyecto (contiene backend/ y frontend/)
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Las variables de entorno tienen prioridad sobre el archivo .env
+    model_config = SettingsConfigDict(env_file=(ROOT / ".env", ".env"), extra="ignore")
 
-    # Metadata de DBA Manager. Por defecto Oracle (usuario DBAMGR); METADATA_URL permite
-    # apuntar a cualquier URL de SQLAlchemy (p. ej. para migrar la metadata a otro motor).
+    # ---- Aplicación ----
+    port: int = 8080
+    # Carpeta con el frontend compilado (npm run build). Vacío = <raíz>/frontend/dist
+    static_dir: str | None = None
+    cors_origins: str = ""
+    log_level: str = "info"
+
+    # ---- Metadata de DBA Manager (Oracle externo) ----
     metadata_url: str | None = None
+    metadata_dsn: str | None = None
     metadata_user: str = "DBAMGR"
     dbamgr_password: str = ""
-    metadata_dsn: str = "localhost:1521/FREEPDB1"
 
-    # ---- Keycloak / OIDC (todo configurable: puede ser el Keycloak incluido o uno corporativo) ----
-    # URL con la que el NAVEGADOR llega a Keycloak; con ella se arma el issuer de los tokens.
+    # ---- Seguridad ----
+    secrets_key: str
+
+    # ---- Keycloak / OIDC ----
     keycloak_public_url: str = "http://localhost:8180"
-    # URL con la que el BACKEND llega a Keycloak (red interna); por defecto la pública.
     keycloak_internal_url: str | None = None
     keycloak_realm: str = "dbamanager"
-    # Cliente público (navegador) con el que inician sesión los usuarios.
     keycloak_client_id: str = "dbamanager-web"
-    # Overrides para proveedores OIDC con otra estructura de URLs.
-    oidc_issuer_url: str | None = None  # env OIDC_ISSUER_URL
-    oidc_jwks_uri: str | None = None  # env OIDC_JWKS_URI
-    oidc_audience: str | None = None  # por defecto keycloak_client_id; "" = no validar audiencia
-    # De dónde salen los roles del token: "realm" (realm_access.roles) o "client" (resource_access.<cliente>.roles)
+    oidc_issuer_url: str | None = None
+    oidc_jwks_uri: str | None = None
+    oidc_audience: str | None = None
     keycloak_roles_source: str = "realm"
-    keycloak_roles_client: str | None = None  # cliente de los roles si source=client (por defecto keycloak_client_id)
-    # Nombres de los roles en Keycloak (por si el realm corporativo usa otros nombres)
+    keycloak_roles_client: str | None = None
     role_requester: str = "solicitante"
     role_dba: str = "dba"
     role_dba_admin: str = "dba_admin"
     role_admin: str = "admin"
-    # Cliente confidencial con cuenta de servicio para administrar roles desde DBA Manager (opcional).
-    # Necesita en realm-management: view-users, query-users, manage-users (y view-clients si source=client).
+    # Asignar roles desde DBA Manager: "token" (con el usuario de Keycloak del admin que inició sesión),
+    # "service-account" (cliente confidencial) u "off".
+    keycloak_roles_admin_mode: str = "token"
     keycloak_admin_client_id: str | None = None
     keycloak_admin_client_secret: str | None = None
 
-    secrets_key: str
-    cors_origins: str = ""
+    # ---- Demo ----
+    seed_demo: bool = False
+    seed_oracle_host: str = "localhost"
+    seed_oracle_port: int = 1521
+    catalog_password: str | None = None
+    executor_password: str | None = None
+
+    @property
+    def static_path(self) -> Path:
+        if self.static_dir:
+            return Path(self.static_dir)
+        # local: frontend/dist ; imagen: /app/static
+        for candidate in (ROOT / "frontend" / "dist", ROOT / "static"):
+            if (candidate / "index.html").exists():
+                return candidate
+        return ROOT / "frontend" / "dist"
 
     @property
     def sqlalchemy_url(self) -> str:
         if self.metadata_url:
             return self.metadata_url
+        if not self.metadata_dsn:
+            raise RuntimeError("Falta METADATA_DSN (host:puerto/servicio de la metadata) o METADATA_URL")
         host_port, service = self.metadata_dsn.split("/", 1)
         return f"oracle+oracledb://{self.metadata_user}:{self.dbamgr_password}@{host_port}/?service_name={service}"
 
@@ -79,7 +107,11 @@ class Settings(BaseSettings):
 
     @property
     def role_management_enabled(self) -> bool:
-        return bool(self.keycloak_admin_client_id and self.keycloak_admin_client_secret)
+        if self.keycloak_roles_admin_mode == "token":
+            return True
+        if self.keycloak_roles_admin_mode == "service-account":
+            return bool(self.keycloak_admin_client_id and self.keycloak_admin_client_secret)
+        return False
 
 
 @lru_cache

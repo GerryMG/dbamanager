@@ -1,90 +1,110 @@
 # DBA Manager
 
-Explorar **estructura** de bases de datos (nunca datos) y solicitar cambios — tablas, columnas, permisos, sinónimos, usuarios lectores, procedimientos — con **aprobación de DBA**, motivo, proyecto y bitácora completa de quién pidió, aprobó y ejecutó.
+Explora la **estructura** de bases de datos Oracle (nunca los datos) y gestiona solicitudes de cambio con **aprobación de DBA**:
+- tablas, columnas, restricciones e índices;
+- particiones, permisos, sinónimos y usuarios lectores;
+- secuencias y código (procedimientos, vistas, triggers…).
+
+Cada solicitud registra el motivo, el proyecto y la finalidad, y queda en una bitácora completa de quién pidió, aprobó y ejecutó.
 
 ## Arquitectura
 
-En este servidor corren solo la app; todo lo demás es externo:
+Es **una sola aplicación**: el backend (FastAPI) sirve también la interfaz web (React) en el mismo puerto. Todo lo demás es externo y se configura con variables:
 
-| Componente | Dónde | Descripción |
-|---|---|---|
-| `frontend` | este servidor, puerto 8088 | React + Mantine, servido por nginx (proxy `/api` → `BACKEND_URL`) |
-| `backend` | este servidor, puerto 8000 | FastAPI (`/api/docs`), python-oracledb thin, SQLAlchemy + Alembic |
-| Metadata | Oracle externo (`METADATA_DSN`) | Usuario **`DBAMGR`**, única dueña de la metadata (privilegios mínimos, sin `ANY`) |
-| Identidad | Keycloak/OIDC externo (`KEYCLOAK_*`) | Inicio de sesión y roles |
-| Bases administradas | sus propios servidores | Una conexión por base (host/puerto/servicio), dadas de alta en la app |
+| Componente | Descripción |
+|---|---|
+| DBA Manager | API `/api` (documentación en `/api/docs`) + interfaz web en `/`, puerto `PORT` |
+| Metadata | Oracle 12.1+ externo (`METADATA_DSN`), usuario **`DBAMGR`** con privilegios mínimos |
+| Identidad | Keycloak / OIDC externo (`KEYCLOAK_*`) |
+| Bases administradas | Oracle 12.1+, una conexión por base (host/puerto/servicio), dadas de alta en la app |
 
-Cada base administrada tiene dos cuentas (`scripts/oracle/cuentas_servicio.sql`):
-
-- `DBAMGR_CATALOG`: `CREATE SESSION` + `SELECT_CATALOG_ROLE`. Solo diccionario; no puede leer datos.
-- `DBAMGR_EXEC`: privilegios `ANY` de DDL (más `READ ANY TABLE`, que Oracle requiere para crear vistas o logs materializados sobre tablas de otros esquemas). Solo se usa para ejecutar solicitudes **aprobadas** y confirmadas; nunca para explorar.
-
-Para agregar otro motor se implementa `EngineAdapter` (`backend/app/engines/base.py`) y se registra en `engines/__init__.py`.
-
-## Arranque (todo externo, modo por defecto)
-
-En este servidor solo corren el **backend** y el **frontend**. La metadata, Keycloak y las bases administradas están en sus propios servidores.
-
-1. **Metadata:** en un Oracle 12.1+, como SYSDBA, ejecuta `scripts/oracle/usuario_metadata.sql`. Crea el usuario `DBAMGR`; las tablas las crea el backend al arrancar.
-2. **Keycloak:** crea el realm, el cliente público y los 4 roles. Para asignar roles desde la app ejecuta `scripts/keycloak/configurar_cliente_admin.sh` con `KC_SETUP_URL`, `KC_SETUP_USER` y `KC_SETUP_PASS`. El cliente público necesita:
-   - *Standard flow* con PKCE S256.
-   - *Valid redirect URIs* y *Web origins* con la URL del frontend.
-   - Un *audience mapper* hacia sí mismo, o bien `OIDC_AUDIENCE=` vacío.
-3. **Bases administradas:** en cada una ejecuta `scripts/oracle/cuentas_servicio.sql`. Las conexiones se dan de alta después en Administración.
-4. **Configuración:**
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   Edita `METADATA_DSN`, `DBAMGR_PASSWORD`, `KEYCLOAK_PUBLIC_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_ADMIN_CLIENT_SECRET` y `SECRETS_KEY`.
-5. **Arranque:**
-
-   ```bash
-   docker compose up -d --build
-   ```
-
-   Abre `http://<host>:8088`.
-
-Al arrancar, el backend **verifica los servidores externos** y lo muestra en `docker compose logs backend`:
-
-- `[OK]`: conexión a la metadata, issuer de Keycloak, llaves de firma y cuenta de servicio de roles.
-- `[ERROR]`: no hay metadata; el backend se detiene.
-- `[AVISO]`: algo de identidad no cuadra. Por ejemplo, si `KEYCLOAK_PUBLIC_URL` no coincide con el issuer real, los inicios de sesión fallarían.
-
-### Demo local completa (opcional)
-
-Para probar sin servidores externos, usa en `.env` el bloque "Demo local" de `.env.example` con `COMPOSE_PROFILES=oracle-local,keycloak`. Levanta un Oracle 23ai con la metadata y bases demo (DEVPDB, PRODPDB) y un Keycloak con estos usuarios demo (contraseña `Cambiar.123`, definidos en `docker/keycloak/realm-dbamanager.json`):
-
-| Usuario | Roles | Puede |
-|---|---|---|
-| `admin.dba` | dba_admin, admin | aprobar/ejecutar todo, administrar conexiones, alcances y respaldos |
-| `luis.dba` | dba | aprobar/ejecutar solo en `VENTAS` y `BI_LECTOR` (alcance asignado) |
-| `ana.dev`, `pedro.bi` | solicitante | explorar y solicitar |
-
-## Despliegue por componentes (servidores separados)
-
-Cada pieza puede estar en un servidor distinto; nada depende de nombres internos de Docker si se configuran las URLs. `COMPOSE_PROFILES` (en `.env`) decide qué se levanta en cada servidor:
-
-| Componente | Local (por defecto) | En otro servidor |
-|---|---|---|
-| Metadata (`DBAMGR`) | perfil `oracle-local` (solo demo) | Quitar `oracle-local`, crear el usuario con `scripts/oracle/usuario_metadata.sql` y definir `METADATA_DSN=host:puerto/servicio` y `DBAMGR_PASSWORD`. Las tablas las crea el backend al arrancar. |
-| Keycloak | perfil `keycloak` (solo demo) | Quitar `keycloak` y configurar `KEYCLOAK_PUBLIC_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID`; `KEYCLOAK_INTERNAL_URL` vacío o la URL que vea el backend. |
-| Bases administradas | demo en el Oracle local | Siempre separadas: cada conexión tiene su host/puerto/servicio. Cuentas con `scripts/oracle/cuentas_servicio.sql`. |
-| Backend | servicio `backend` | Puede correr solo: `docker compose up -d backend` en su servidor. |
-| Frontend | servicio `frontend` | `BACKEND_URL=http://servidor-backend:8000`. |
-
-Con metadata propia usa `SEED_DEMO=false`, para no crear las conexiones demo.
-
-Ejemplo de servidor con solo backend y frontend:
-
-```bash
-COMPOSE_PROFILES= docker compose up -d backend frontend
+```
+backend/    API, generación de SQL, flujo de aprobación (Python)
+frontend/   interfaz web (React + Mantine); se compila y la sirve el backend
+scripts/    arranque local y scripts SQL para preparar Oracle
+docs/       guía de Keycloak
+demo/       infraestructura opcional de prueba (Oracle y Keycloak en Docker)
 ```
 
-En ese caso, `METADATA_DSN` y las variables de Keycloak deben apuntar a sus servidores.
+## Preparar los servidores
 
-Probado con backend y frontend en redes distintas. La metadata estaba en otro Oracle (18c), Keycloak se accedió por su URL pública y la base administrada por IP: inicio de sesión, exploración, solicitud, aprobación, ejecución y gestión de roles funcionaron.
+1. **Metadata:** en un Oracle 12.1+, como SYSDBA (en la PDB elegida), ejecuta:
+
+   ```sql
+   @scripts/oracle/usuario_metadata.sql "<clave DBAMGR>" USERS
+   ```
+
+   Las tablas las crea DBA Manager al arrancar.
+2. **Bases a administrar:** en cada una, como SYSDBA, ejecuta:
+
+   ```sql
+   @scripts/oracle/cuentas_servicio.sql "<clave catálogo>" "<clave ejecutora>"
+   ```
+
+   Crea estas cuentas:
+   - `DBAMGR_CATALOG`: solo lee el diccionario y no puede leer datos.
+   - `DBAMGR_EXEC`: privilegios de DDL; únicamente ejecuta lo aprobado.
+3. **Keycloak:** sigue [docs/KEYCLOAK.md](docs/KEYCLOAK.md). Basta un usuario administrador de tu realm; no hace falta `master`.
+
+## Configuración
+
+Copia `.env.example` a `.env` y completa los valores. **Todas** las variables están ahí, agrupadas y explicadas. Las variables de entorno del sistema tienen prioridad sobre `.env`.
+
+Al arrancar, la app verifica la configuración y muestra en el log una línea por chequeo:
+- `[OK]`: conexión a la metadata, issuer y llaves de Keycloak correctos.
+- `[AVISO]`: algo no cuadra (por ejemplo, una URL de Keycloak que no coincide con el issuer real).
+- `[ERROR]`: falta la metadata o una variable obligatoria; la app no arranca.
+
+## Correr en cualquier máquina (sin Docker)
+
+Requisitos: **Python 3.11+** y **Node.js 18+**. Los servidores de metadata, Keycloak y bases deben ser accesibles desde esa máquina.
+
+Linux / macOS:
+
+```bash
+cp .env.example .env
+```
+
+```bash
+scripts/iniciar-local.sh
+```
+
+Windows (PowerShell):
+
+```powershell
+Copy-Item .env.example .env
+```
+
+```powershell
+.\scripts\iniciar-local.ps1
+```
+
+- La primera vez el script crea el entorno de Python, instala dependencias y compila la interfaz. Después solo arranca.
+- Si cambias código del frontend, agrega `--build` (o `-Build` en Windows) para recompilarlo.
+- Abre `http://localhost:<PORT>`. En Keycloak, esa URL debe estar en *Valid redirect URIs* y *Web origins* del cliente.
+
+## Roles y permisos
+
+| Rol (en Keycloak) | Puede |
+|---|---|
+| `solicitante` | Explorar estructura y crear solicitudes |
+| `dba` | Aprobar/ejecutar solo en los esquemas que se le asignen (Administración → Alcances de DBAs) |
+| `dba_admin` | Aprobar/ejecutar cualquier solicitud |
+| `admin` | Conexiones, usuarios y roles, alcances, proyectos, respaldos |
+
+- Quien solicita nunca aprueba lo suyo.
+- En **Administración → Usuarios y roles** el admin asigna los roles con su propio usuario de Keycloak (`KEYCLOAK_ROLES_ADMIN_MODE=token`). Ver el paso 6 de [docs/KEYCLOAK.md](docs/KEYCLOAK.md).
+
+### Permiso de ejecutar
+
+Ejecutar desde la app (con la cuenta privilegiada) viene **desactivado para todos**:
+
+- **Solo el propio DBA puede activarlo para sí mismo**, desde el menú de su usuario → *Ejecución desde la app*, escribiendo `ACTIVAR`.
+- No existe forma de que otra persona lo active por él, ni siquiera un admin.
+- Al restaurar un respaldo de metadata, vuelve a quedar desactivado para todos.
+- Cada activación o desactivación queda en la bitácora.
+- Además, la conexión debe permitir ejecución (Administración → Conexiones).
+- Sin el permiso activado, el DBA descarga el script, lo ejecuta por su cuenta y lo registra como ejecución manual.
 
 ## Qué se puede solicitar (todo de forma visual)
 
@@ -99,6 +119,28 @@ Probado con backend y frontend en redes distintas. La metadata estaba en otro Or
 | Accesos | GRANT/REVOKE (incluye permisos por columna), sinónimos privados y públicos, usuarios lectores/owner |
 
 Lo que no tiene formulario (subparticiones, índices globales particionados, `CREATE TABLE AS SELECT`, tablas IOT, nombres entre comillas con minúsculas) se maneja como SQL personalizado, igualmente con aprobación.
+
+## Flujo de una solicitud
+
+`Borrador → Pendiente de aprobación → Aprobada → Ejecutada` (con *Cambios solicitados*, *Rechazada*, *Falló* → reintentar, *Cancelada*).
+
+- Motivo (¿por qué?), finalidad (¿para qué?), proyecto y ticket quedan ligados a la solicitud.
+- Quien solicita nunca aprueba lo suyo. Un `dba` necesita alcance sobre **todos** los esquemas afectados; un `dba_admin` aprueba todo. Las aprobaciones requeridas se configuran por conexión.
+- El SQL se genera desde formularios con identificadores validados; lo que se aprueba es exactamente lo que se ejecuta. Editar la solicitud invalida las aprobaciones.
+- **Importar SQL**: en el editor se puede pegar o subir un `.sql` (CREATE TABLE, GRANT/REVOKE, sinónimos, CREATE USER, ALTER TABLE ADD/MODIFY/DROP COLUMN, índices, procedimientos/vistas, DROP…). Se convierte en operaciones visuales editables; las FK, UNIQUE y CHECK se agregan como `ALTER TABLE` después de la tabla, y lo que no puede representarse sin cambiar su significado (tipos no soportados, particiones, nombres entre comillas con minúsculas, secuencias…) queda tal cual como SQL personalizado. Cada operación importada muestra notas de lo que se ajustó.
+- "Validar contra la base" revisa el diccionario: objetos o usuarios inexistentes, FKs que impiden un `DROP`, sinónimos que quedarían inválidos, etc.
+- Ejecutar exige teclear el código de la solicitud. Hay dos modos:
+  - **Desde la app**, con la cuenta ejecutora: solo si la conexión lo permite **y** el DBA activó para sí mismo la ejecución (ver "Permiso de ejecutar"). Se detiene en el primer error y reporta errores de compilación PL/SQL.
+  - **Manual**: se descarga el `.sql`, se ejecuta fuera y se registra con notas.
+- Las sesiones a Oracle llevan `client_identifier` = usuario de la app, para correlacionar con la auditoría de Oracle.
+- `CREATE USER` genera la contraseña al ejecutar; se muestra una sola vez y no se guarda.
+
+## Orden de ejecución
+
+- Las operaciones se ejecutan **una por una en el orden mostrado** en la solicitud, y cada una sentencia por sentencia. Al primer error todo se detiene; nada posterior se ejecuta.
+- El avance se guarda por operación y por sentencia. **El reintento continúa en la sentencia exacta donde falló**, sin repetir lo ya aplicado (el DDL de Oracle hace commit implícito).
+- La solicitud se bloquea en estado `EXECUTING` durante la ejecución: si dos DBAs ejecutan a la vez, el segundo recibe un aviso. Si el servicio se reinicia a mitad, la solicitud pasa a `FAILED` y se puede reintentar.
+- "Validar contra la base" detecta **dependencias mal ordenadas**: si una operación usa una tabla, columna, usuario, índice o secuencia que se crea en una operación posterior, indica cuál mover y antes de cuál.
 
 ## Compatibilidad: Oracle 12.1 en adelante
 
@@ -116,100 +158,52 @@ Lo que no tiene formulario (subparticiones, índices globales particionados, `CR
 
   El editor tampoco ofrece tipos de dato que la versión no tiene.
 - Probado en vivo contra **Oracle 23ai** (DEVPDB/PRODPDB) y **Oracle 18c XE**. Las reglas de 12.1 y 12.2 se verificaron con conexiones de versión simulada; no existe imagen gratuita de 12c para pruebas en vivo.
-- Para repetir la prueba en 18c:
-
-  ```bash
-  docker compose --profile compat up -d oracle18
-  ```
-
-  Después activa la conexión "Oracle 18c QA" en Administración.
-- **Cuentas de servicio en servidores reales:** `scripts/oracle/cuentas_servicio.sql` (como SYSDBA, en la PDB a administrar). Se adapta a la versión: en 12.1.0.1 usa `SELECT ANY TABLE` en lugar de `READ ANY TABLE`.
+- Para repetir la prueba en 18c: `docker compose -f demo/docker-compose.yml --env-file .env --profile compat up -d oracle18`.
+- `scripts/oracle/cuentas_servicio.sql` se adapta a la versión: en 12.1.0.1 usa `SELECT ANY TABLE` en lugar de `READ ANY TABLE`.
 - El driver `python-oracledb` en modo *thin* soporta servidores 12.1+. Si una cuenta solo tiene verificador de contraseña 10G (muy antiguo), hay que restablecer su contraseña.
 
-## Orden de ejecución
+## Metadata: migraciones y respaldo
 
-- Las operaciones se ejecutan **una por una en el orden mostrado** en la solicitud, y cada una sentencia por sentencia. Al primer error todo se detiene; nada posterior se ejecuta.
-- El avance se guarda por operación y por sentencia. **El reintento continúa en la sentencia exacta donde falló**, sin repetir lo ya aplicado (el DDL de Oracle hace commit implícito).
-- La solicitud se bloquea en estado `EXECUTING` durante la ejecución: si dos DBAs ejecutan a la vez, el segundo recibe un aviso. Si el servicio se reinicia a mitad, la solicitud pasa a `FAILED` y se puede reintentar.
-- "Validar contra la base" detecta **dependencias mal ordenadas**: si una operación usa una tabla, columna, usuario, índice o secuencia que se crea en una operación posterior, indica cuál mover y antes de cuál.
-
-## Flujo de una solicitud
-
-`Borrador → Pendiente de aprobación → Aprobada → Ejecutada` (con *Cambios solicitados*, *Rechazada*, *Falló* → reintentar, *Cancelada*).
-
-- Motivo (¿por qué?), finalidad (¿para qué?), proyecto y ticket quedan ligados a la solicitud.
-- Quien solicita nunca aprueba lo suyo. Un `dba` necesita alcance sobre **todos** los esquemas afectados; un `dba_admin` aprueba todo. Las aprobaciones requeridas se configuran por conexión.
-- El SQL se genera desde formularios con identificadores validados; lo que se aprueba es exactamente lo que se ejecuta. Editar la solicitud invalida las aprobaciones.
-- **Importar SQL**: en el editor se puede pegar o subir un `.sql` (CREATE TABLE, GRANT/REVOKE, sinónimos, CREATE USER, ALTER TABLE ADD/MODIFY/DROP COLUMN, índices, procedimientos/vistas, DROP…). Se convierte en operaciones visuales editables; las FK, UNIQUE y CHECK se agregan como `ALTER TABLE` después de la tabla, y lo que no puede representarse sin cambiar su significado (tipos no soportados, particiones, nombres entre comillas con minúsculas, secuencias…) queda tal cual como SQL personalizado. Cada operación importada muestra notas de lo que se ajustó.
-- "Validar contra la base" revisa el diccionario: objetos o usuarios inexistentes, FKs que impiden un `DROP`, sinónimos que quedarían inválidos, etc.
-- Ejecutar exige teclear el código de la solicitud. Hay dos modos:
-  - **Desde la app**, con la cuenta ejecutora, si la conexión lo permite. Se detiene en el primer error y reporta errores de compilación PL/SQL.
-  - **Manual**: se descarga el `.sql`, se ejecuta fuera y se registra con notas.
-- Las sesiones a Oracle llevan `client_identifier` = usuario de la app, para correlacionar con la auditoría de Oracle.
-- `CREATE USER` genera la contraseña al ejecutar; se muestra una sola vez y no se guarda.
-
-## Autenticación e identidad (Keycloak configurable)
-
-OIDC estándar: Authorization Code + PKCE S256, con un cliente propio en `frontend/src/auth.ts`. Funciona también en HTTP por IP. El backend valida firma, issuer y audiencia con el JWKS. Todo se define en `.env`:
-
-| Variable | Para qué |
-|---|---|
-| `COMPOSE_PROFILES=keycloak` | Levanta el Keycloak incluido. Quítalo para usar un Keycloak corporativo. |
-| `KEYCLOAK_PUBLIC_URL` | URL con la que el **navegador** llega a Keycloak; arma el issuer. |
-| `KEYCLOAK_INTERNAL_URL` | URL con la que el **backend** llega a Keycloak (red interna). Vacío = la pública. |
-| `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID` | Realm y cliente público de inicio de sesión. |
-| `OIDC_ISSUER_URL`, `OIDC_JWKS_URI`, `OIDC_AUDIENCE` | Opcionales para otros proveedores OIDC. `OIDC_AUDIENCE` vacío = no validar audiencia. |
-| `KEYCLOAK_ROLES_SOURCE` (`realm` o `client`), `KEYCLOAK_ROLES_CLIENT` | De dónde salen los roles del token. |
-| `ROLE_REQUESTER`, `ROLE_DBA`, `ROLE_DBA_ADMIN`, `ROLE_ADMIN` | Nombre en Keycloak de cada rol de la app (p. ej. grupos/roles corporativos). |
-| `KEYCLOAK_ADMIN_CLIENT_ID`, `KEYCLOAK_ADMIN_CLIENT_SECRET` | Cuenta de servicio para asignar roles desde DBA Manager (opcional). |
-
-- El realm incluido (`docker/keycloak/realm-dbamanager.json`) usa esas mismas variables (`${KEYCLOAK_REALM}`, etc.) al importarse por primera vez.
-- El frontend lee URL, realm y cliente en tiempo de ejecución: no hay que reconstruirlo al cambiarlos.
-- LDAP/Active Directory: configúralo como *User Federation* en Keycloak; los usuarios federados aparecen en DBA Manager.
-- En producción usa HTTPS.
-
-### Asignar roles desde DBA Manager
-
-Administración → **Usuarios y roles** (solo rol `admin`):
-
-- Lista los usuarios de Keycloak y permite marcar Solicitante / DBA / DBA principal / Admin.
-- Los cambios se aplican en Keycloak y quedan en la bitácora (`ROLES_CHANGED`: quién, a quién, qué agregó o quitó).
-- Toman efecto cuando el usuario renueva su sesión (minutos).
-- Un admin no puede quitarse su propio rol de admin.
-- Los roles heredados de grupos o roles compuestos se muestran, pero no se editan aquí.
-- Si un usuario queda como DBA sin alcances de esquemas, se avisa.
-
-Para habilitarlo en cualquier Keycloak (el incluido o uno corporativo):
-
-```bash
-scripts/keycloak/configurar_cliente_admin.sh
-```
-
-- El script crea o actualiza el cliente confidencial `KEYCLOAK_ADMIN_CLIENT_ID` con su secreto.
-- Le da a su cuenta de servicio solo `view-users`, `query-users`, `manage-users` y `view-clients` de `realm-management`. No necesita `view-realm` ni `manage-realm`.
-- Crea los 4 roles si no existen.
-- Para un Keycloak externo, define `KC_SETUP_URL`, `KC_SETUP_USER` y `KC_SETUP_PASS` al ejecutarlo.
-
-## Metadata: migraciones, respaldo y migración
-
-- Esquema versionado con **Alembic** (`backend/migrations`). Se aplica solo al arrancar el backend.
-  - Nueva versión: `alembic revision --autogenerate -m "..."`.
-- **JSON portable**: Administración → Respaldo, o `GET /api/admin/backup` y `POST /api/admin/restore`. Solo restaura sobre metadata vacía, salvo `replace=true`. Las credenciales viajan cifradas, así que el destino necesita la misma `SECRETS_KEY`.
-  - Para migrar a otra instancia o motor: `METADATA_URL=<url sqlalchemy>`, arrancar (Alembic crea las tablas) e importar el JSON.
-- **Data Pump** del esquema `DBAMGR`:
-
-  ```bash
-  scripts/backup-metadata.sh                      # export a ./backups
-  scripts/backup-metadata.sh restore archivo.dmp  # import
-  ```
+- El esquema de la metadata se versiona con **Alembic** (`backend/migrations`) y se actualiza solo al arrancar.
+- **Respaldo y migración:** Administración → *Respaldo de metadata* descarga o restaura un JSON portable con toda la metadata.
+  - Las contraseñas de conexiones van cifradas: para restaurar se necesita la misma `SECRETS_KEY`.
+  - Solo restaura sobre metadata vacía, salvo que se active "reemplazar".
+- También puedes respaldar el esquema `DBAMGR` con las herramientas habituales de Oracle (Data Pump).
 
 ## Desarrollo
 
+Con recarga automática, en dos terminales. Primero el backend (puerto 8080):
+
 ```bash
-# backend con recarga (requiere Oracle y Keycloak arriba)
-docker compose run --rm -p 8000:8000 -v $PWD/backend:/app backend uvicorn app.main:app --host 0.0.0.0 --reload
-# frontend con Vite (http://localhost:5173, proxy /api → :8000)
-cd frontend && npm install && npm run dev
+cd backend && .venv/bin/uvicorn app.main:app --reload --port 8080
 ```
 
-Nota: si el umask del host es restrictivo, los archivos montados en contenedores deben ser legibles por "otros" (p. ej. `docker/oracle/init` → 755/644).
+Luego el frontend (puerto 5173; `/api` se redirige al backend):
+
+```bash
+cd frontend && npm run dev
+```
+
+Agrega `http://localhost:5173` en `CORS_ORIGINS` y en las URLs del cliente de Keycloak.
+
+## Infraestructura de demostración (opcional)
+
+`demo/docker-compose.yml` levanta un Oracle 23ai (metadata y bases de ejemplo DEVPDB/PRODPDB) y un Keycloak con usuarios de prueba. Sirve para probar sin servidores propios:
+
+```bash
+docker compose -f demo/docker-compose.yml --env-file .env up -d
+```
+
+En `.env` usa:
+- `METADATA_DSN=localhost:1521/FREEPDB1`
+- `KEYCLOAK_PUBLIC_URL=http://<ip>:8180`
+- `SEED_DEMO=true`
+- las contraseñas de la sección "Solo para demo".
+
+Usuarios demo (contraseña `Cambiar.123`):
+
+| Usuario | Roles |
+|---|---|
+| `admin.dba` | dba_admin, admin (con permisos para asignar roles en su realm) |
+| `luis.dba` | dba (alcance en `VENTAS` y `BI_LECTOR`) |
+| `ana.dev`, `pedro.bi` | solicitante |

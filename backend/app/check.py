@@ -3,7 +3,6 @@
 Se ejecuta antes de las migraciones. Errores fatales (sin metadata o sin llave de cifrado)
 detienen el arranque con un mensaje claro; problemas de identidad se reportan como advertencia.
 """
-import os
 import sys
 import time
 
@@ -37,7 +36,7 @@ def main() -> None:
         return
 
     # ---------------------------------------------------------------- metadata
-    if not s.metadata_url and not (os.getenv("METADATA_DSN") and s.dbamgr_password):
+    if not s.metadata_url and not (s.metadata_dsn and s.dbamgr_password):
         fail("Configura la base de metadata: METADATA_DSN=host:puerto/servicio y DBAMGR_PASSWORD "
              "(o METADATA_URL). Crea el usuario con scripts/oracle/usuario_metadata.sql")
     target = s.metadata_url.split("@")[-1] if s.metadata_url else f"{s.metadata_user}@{s.metadata_dsn}"
@@ -78,7 +77,7 @@ def main() -> None:
         warn(f"No se pudo consultar el proveedor de identidad ({discovery}): {exc}. "
              "Revisa KEYCLOAK_INTERNAL_URL / KEYCLOAK_PUBLIC_URL; los inicios de sesión fallarán hasta corregirlo.")
 
-    if s.role_management_enabled:
+    if s.keycloak_roles_admin_mode == "service-account" and s.role_management_enabled:
         try:
             r = httpx.post(f"{s.keycloak_backend_url}/realms/{s.keycloak_realm}/protocol/openid-connect/token",
                            data={"grant_type": "client_credentials", "client_id": s.keycloak_admin_client_id,
@@ -90,8 +89,12 @@ def main() -> None:
                      "Ejecuta scripts/keycloak/configurar_cliente_admin.sh o revisa el secreto.")
         except Exception as exc:  # noqa: BLE001
             warn(f"Administración de roles: sin respuesta de Keycloak ({exc})")
+    elif s.keycloak_roles_admin_mode == "token":
+        print("[INFO] Administración de roles: con el usuario de Keycloak de cada admin (modo token)", flush=True)
     else:
-        print("[INFO] Administración de roles desde la app deshabilitada (sin KEYCLOAK_ADMIN_CLIENT_ID/SECRET)", flush=True)
+        print("[INFO] Administración de roles desde la app deshabilitada", flush=True)
+    if not s.static_path.joinpath("index.html").exists():
+        warn(f"No se encontró el frontend compilado en {s.static_path} (npm run build); solo funcionará la API")
 
 
 if __name__ == "__main__":

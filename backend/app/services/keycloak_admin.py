@@ -1,10 +1,15 @@
-"""Administración de roles en Keycloak desde DBA Manager (API REST de administración).
+"""Administración de roles en Keycloak desde DBA Manager (API REST de administración del realm).
 
-Usa un cliente confidencial con cuenta de servicio (KEYCLOAK_ADMIN_CLIENT_ID / _SECRET) que solo
-necesita en `realm-management`: view-users, query-users, manage-users (y view-clients si los
-roles son de cliente). No requiere view-realm ni manage-realm. DBA Manager solo toca los 4 roles que conoce; otros roles del usuario no se modifican.
+Dos modos (KEYCLOAK_ROLES_ADMIN_MODE):
+  * token: se usa el token del admin de DBA Manager que inició sesión. No requiere usuario master,
+    cuenta de servicio ni secreto: basta con que ese usuario tenga en su realm, cliente
+    `realm-management`, los roles view-users, query-users y manage-users (y view-clients si los
+    roles de la app son de cliente). Cada cambio en Keycloak queda hecho con su propia identidad.
+  * service-account: cliente confidencial con cuenta de servicio y esos mismos roles.
+No requiere view-realm ni manage-realm. DBA Manager solo toca los 4 roles que conoce.
 """
 import time
+from contextvars import ContextVar
 
 import httpx
 from fastapi import HTTPException
@@ -13,13 +18,27 @@ from app.core.config import get_settings
 
 _token: dict = {"value": None, "exp": 0.0}
 _client_uuid: dict[str, str] = {}
+_caller_token: ContextVar[str | None] = ContextVar("caller_token", default=None)
+_PERMS = "view-users, query-users y manage-users del cliente realm-management"
+
+
+def use_caller_token(token: str | None) -> None:
+    """Modo token: las llamadas de esta petición usan el token del admin que inició sesión."""
+    _caller_token.set(token)
 
 
 def _cfg():
     s = get_settings()
     if not s.role_management_enabled:
-        raise HTTPException(409, "La administración de roles no está configurada (KEYCLOAK_ADMIN_CLIENT_ID / SECRET)")
+        raise HTTPException(409, "La administración de roles desde DBA Manager está deshabilitada "
+                                 "(KEYCLOAK_ROLES_ADMIN_MODE=off o falta el cliente de servicio)")
     return s
+
+
+def _no_perms_msg() -> str:
+    if get_settings().keycloak_roles_admin_mode == "token":
+        return f"Tu usuario de Keycloak no tiene permisos para administrar usuarios del realm: pide que te asignen {_PERMS}"
+    return f"La cuenta de servicio no tiene permisos suficientes: asígnale {_PERMS}"
 
 
 def _admin_base() -> str:
@@ -29,6 +48,11 @@ def _admin_base() -> str:
 
 def _get_token() -> str:
     s = _cfg()
+    if s.keycloak_roles_admin_mode == "token":
+        token = _caller_token.get()
+        if not token:
+            raise HTTPException(401, "Falta el token del usuario para administrar roles")
+        return token
     if _token["value"] and _token["exp"] - time.time() > 30:
         return _token["value"]
     try:
@@ -53,9 +77,8 @@ def _call(method: str, path: str, **kw) -> httpx.Response:
                           timeout=15, **kw)
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"No se pudo contactar a Keycloak: {exc}") from exc
-    if r.status_code == 403:
-        raise HTTPException(502, "La cuenta de servicio no tiene permisos suficientes en realm-management "
-                                 "(view-users, query-users, manage-users)")
+    if r.status_code in (401, 403):
+        raise HTTPException(403, _no_perms_msg())
     if r.status_code == 404:
         raise HTTPException(404, "No encontrado en Keycloak")
     if r.status_code >= 400:
@@ -154,6 +177,7 @@ def status() -> dict:
         "roles_source": s.keycloak_roles_source,
         "roles_client": s.roles_client if s.keycloak_roles_source == "client" else None,
         "role_names": s.role_names, "management_enabled": s.role_management_enabled,
+        "management_mode": s.keycloak_roles_admin_mode,
         "management_ok": False, "management_error": None, "missing_roles": [],
     }
     if not s.role_management_enabled:

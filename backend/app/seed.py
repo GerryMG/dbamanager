@@ -1,11 +1,10 @@
-"""Carga datos demo (conexiones DEV/PROD al Oracle local, proyectos y alcances) si la metadata está vacía.
+"""Carga datos demo (conexiones DEV/PROD al Oracle de demo, proyectos y alcances) si la metadata está vacía.
 
 Se activa con SEED_DEMO=true. No hace nada si ya existen conexiones.
 """
-import os
-
 from sqlalchemy import func, select
 
+from app.core.config import get_settings
 from app.core.crypto import encrypt
 from app.core.db import SessionLocal
 from app.models import ApproverScope, DbConnection, Project
@@ -13,22 +12,26 @@ from app.services.audit import audit
 
 
 def main() -> None:
-    if os.getenv("SEED_DEMO", "false").lower() != "true":
+    settings = get_settings()
+    if not settings.seed_demo:
+        return
+    if not (settings.catalog_password and settings.executor_password):
+        print("SEED_DEMO=true requiere CATALOG_PASSWORD y EXECUTOR_PASSWORD; no se cargó la demo")
         return
     with SessionLocal() as db:
         if db.scalar(select(func.count()).select_from(DbConnection)):
             return
-        host = os.getenv("SEED_ORACLE_HOST", "oracle")
+        host, port = settings.seed_oracle_host, settings.seed_oracle_port
         conns = {}
         for name, env, service, desc in [
             ("Oracle DEV", "DEV", "DEVPDB", "Base de desarrollo (PDB local DEVPDB)"),
             ("Oracle PROD", "PROD", "PRODPDB", "Base productiva simulada (PDB local PRODPDB)"),
         ]:
             c = DbConnection(
-                name=name, engine="oracle", environment=env, description=desc, host=host, port=1521,
+                name=name, engine="oracle", environment=env, description=desc, host=host, port=port,
                 service_name=service, catalog_user="DBAMGR_CATALOG",
-                catalog_password_enc=encrypt(os.environ["CATALOG_PASSWORD"]),
-                exec_user="DBAMGR_EXEC", exec_password_enc=encrypt(os.environ["EXECUTOR_PASSWORD"]),
+                catalog_password_enc=encrypt(settings.catalog_password),
+                exec_user="DBAMGR_EXEC", exec_password_enc=encrypt(settings.executor_password),
                 allow_execution=True, required_approvals=1, created_by="seed",
             )
             db.add(c)

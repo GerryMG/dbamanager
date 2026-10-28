@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.core.security import CurrentUser
 from app.engines.base import Statement
 from app.models import (Approval, ApproverScope, ChangeRequest, DbConnection, Execution, RequestComment,
-                        RequestOperation)
+                        RequestOperation, UserSetting)
 from app.operations import Operation
 from app.services.audit import audit
 from app.services.connections import conn_info, engine_for, server_version
@@ -161,6 +161,23 @@ def can_execute(db: Session, user: CurrentUser, req: ChangeRequest) -> bool:
     return has_scope(db, user, req.connection_id, schemas_of(req))
 
 
+def self_execution_enabled(db: Session, username: str) -> bool:
+    """¿El usuario activó para sí mismo la ejecución desde DBA Manager? (desactivado por defecto)"""
+    row = db.get(UserSetting, username)
+    return bool(row and row.can_execute)
+
+
+def set_self_execution(db: Session, user: CurrentUser, enabled: bool) -> None:
+    """Solo modifica la preferencia del propio usuario: no existe forma de cambiarla para otra persona."""
+    if enabled and not user.is_dba:
+        raise HTTPException(403, "Solo un DBA puede activar la ejecución desde DBA Manager")
+    row = db.get(UserSetting, user.username) or UserSetting(username=user.username)
+    row.can_execute, row.can_execute_changed_at = enabled, now()
+    db.merge(row)
+    audit(db, user, "SELF_EXECUTION_ENABLED" if enabled else "SELF_EXECUTION_DISABLED", "user", user.username)
+    db.commit()
+
+
 def permissions_for(db: Session, user: CurrentUser, req: ChangeRequest) -> dict:
     owner = user.username == req.requested_by
     review = can_review(db, user, req)
@@ -172,6 +189,7 @@ def permissions_for(db: Session, user: CurrentUser, req: ChangeRequest) -> dict:
         "review": review and req.status == "PENDING_APPROVAL" and not already,
         "execute": can_execute(db, user, req) and req.status in EXECUTABLE,
         "auto_execute": bool(req.connection.allow_execution and req.connection.exec_user),
+        "self_execution": self_execution_enabled(db, user.username),
         "comment": True,
     }
 
@@ -283,6 +301,9 @@ def execute(db: Session, user: CurrentUser, req: ChangeRequest, confirm_code: st
     conn = req.connection
     if not conn.allow_execution:
         raise HTTPException(409, "Esta conexión no permite ejecución desde DBA Manager; usa el script y marca como ejecutada")
+    if not self_execution_enabled(db, user.username):
+        raise HTTPException(403, "No tienes activada la ejecución desde DBA Manager. Solo tú puedes activarla, "
+                                 "en tu perfil; mientras tanto usa el script y marca la solicitud como ejecutada")
     info = conn_info(conn, "exec", app_user=user.username)
     engine = engine_for(conn)
 
