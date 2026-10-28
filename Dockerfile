@@ -2,7 +2,8 @@
 # variables de entorno (ver .env.example). Corre sin root y con cualquier UID asignado.
 
 # ---- 1) Compilar el frontend ----
-FROM node:22-alpine AS frontend
+# Node solo se usa para compilar (no queda en la imagen final). Versión fija con parches de seguridad.
+FROM node:24.22.1-alpine AS frontend
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund

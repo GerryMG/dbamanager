@@ -1,5 +1,5 @@
 # Corre DBA Manager en esta máquina, sin Docker (Windows PowerShell).
-# Requisitos: Python 3.11+ y Node.js 18+. Configuración en .env (copiar de .env.example).
+# Requisitos: Python 3.11+ y Node.js 24.22.1+ (o 22.23.4+ / 26.12.1+, con parches de seguridad). Configuración en .env (copiar de .env.example).
 #   .\scripts\iniciar-local.ps1            # instala lo necesario (la primera vez) y arranca
 #   .\scripts\iniciar-local.ps1 -Build     # fuerza volver a compilar el frontend
 param([switch]$Build)
@@ -21,7 +21,8 @@ Write-Host ">> Instalando dependencias de Python"
 & $venvPy -m pip install -q --disable-pip-version-check -r backend\requirements.txt
 
 if ($Build -or -not (Test-Path "frontend\dist\index.html")) {
-  if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "Falta Node.js 18+ (npm) para compilar el frontend" }
+  if (-not (Get-Command npm -ErrorAction SilentlyContinue)) { throw "Falta Node.js 24.22.1+ (npm) para compilar el frontend" }
+  & node scripts\node-version-check.js; if ($LASTEXITCODE -ne 0) { exit 1 }
   Write-Host ">> Compilando el frontend"
   Push-Location frontend; npm ci --no-audit --no-fund; npm run build; Pop-Location
 }

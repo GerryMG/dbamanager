@@ -47,7 +47,7 @@ Al arrancar, la app verifica la configuración y muestra en el log una línea po
 
 ## Correr en cualquier máquina (sin Docker)
 
-Requisitos: **Python 3.11+** y **Node.js 18+**. Los servidores de metadata, Keycloak y bases deben ser accesibles desde esa máquina.
+Requisitos: **Python 3.11+** y **Node.js 24.22.1+** (o 22.23.4+ / 26.12.1+; el script rechaza versiones sin los parches de seguridad vigentes). Los servidores de metadata, Keycloak y bases deben ser accesibles desde esa máquina.
 
 Linux / macOS:
 

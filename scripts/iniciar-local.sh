@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Corre DBA Manager en esta máquina, sin Docker (Linux / macOS).
-# Requisitos: Python 3.11+ y Node.js 18+. Configuración en .env (copiar de .env.example).
+# Requisitos: Python 3.11+ y Node.js 24.22.1+ (o 22.23.4+ / 26.12.1+, con parches de seguridad). Configuración en .env (copiar de .env.example).
 #   scripts/iniciar-local.sh            # instala lo necesario (la primera vez) y arranca
 #   scripts/iniciar-local.sh --build    # fuerza volver a compilar el frontend
 set -euo pipefail
@@ -19,7 +19,8 @@ echo ">> Instalando dependencias de Python"
 backend/.venv/bin/pip install -q --disable-pip-version-check -r backend/requirements.txt
 
 if [ ! -f frontend/dist/index.html ] || [ "${1:-}" = "--build" ]; then
-  command -v npm >/dev/null || { echo "Falta Node.js 18+ (npm) para compilar el frontend"; exit 1; }
+  command -v npm >/dev/null || { echo "Falta Node.js 24.22.1+ (npm) para compilar el frontend"; exit 1; }
+  node scripts/node-version-check.js || exit 1
   echo ">> Compilando el frontend"
   (cd frontend && npm ci --no-audit --no-fund && npm run build)
 fi
