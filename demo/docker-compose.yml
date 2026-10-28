@@ -58,7 +58,7 @@ services:
     volumes:
       - oracle18-data:/opt/oracle/oradata
       - ./oracle/init18:/container-entrypoint-initdb.d:ro
-      - ../scripts/oracle/cuentas_servicio.sql:/opt/dbamanager/cuentas_servicio.sql:ro
+      - ./oracle/init18/cuentas_servicio.sql.txt:/opt/dbamanager/cuentas_servicio.sql:ro
       - ./oracle/init/demo_schemas.sql.txt:/opt/dbamanager/demo_schemas.sql.txt:ro
 
 volumes:

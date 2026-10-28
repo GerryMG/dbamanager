@@ -38,7 +38,7 @@ def main() -> None:
     # ---------------------------------------------------------------- metadata
     if not s.metadata_url and not (s.metadata_dsn and s.dbamgr_password):
         fail("Configura la base de metadata: METADATA_DSN=host:puerto/servicio y DBAMGR_PASSWORD "
-             "(o METADATA_URL). Crea el usuario con scripts/oracle/usuario_metadata.sql")
+             "(o METADATA_URL). Qué debe existir: docs/ORACLE.md")
     target = s.metadata_url.split("@")[-1] if s.metadata_url else f"{s.metadata_user}@{s.metadata_dsn}"
     connect_args = {"tcp_connect_timeout": 5} if s.sqlalchemy_url.startswith("oracle") else {}
     engine = create_engine(s.sqlalchemy_url, pool_pre_ping=True, connect_args=connect_args)

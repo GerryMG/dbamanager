@@ -74,8 +74,11 @@ class OracleAdapter(EngineAdapter):
     def test_connection(self, info: ConnInfo) -> dict:
         with _connect(info, "test") as conn:
             # v$version.banner_full solo existe desde 18c: se usa banner (12c+)
-            row = _query(conn, """SELECT v.banner, SYS_CONTEXT('USERENV','CON_NAME') AS container
-                                    FROM v$version v WHERE v.banner LIKE 'Oracle%' AND ROWNUM = 1""")
+            try:  # v$version requiere SELECT_CATALOG_ROLE; la cuenta ejecutora puede no tenerlo
+                row = _query(conn, """SELECT v.banner, SYS_CONTEXT('USERENV','CON_NAME') AS container
+                                        FROM v$version v WHERE v.banner LIKE 'Oracle%' AND ROWNUM = 1""")
+            except oracledb.DatabaseError:
+                row = _query(conn, "SELECT NULL AS banner, SYS_CONTEXT('USERENV','CON_NAME') AS container FROM dual")
             privs = _query(conn, "SELECT privilege FROM session_privs ORDER BY 1")
             version = ddl.parse_version(conn.version)
             return {
@@ -466,9 +469,12 @@ def _plsql_errors(conn, sql: str) -> str:
                   sql, re.IGNORECASE)
     if not m:
         return ""
-    rows = _query(conn, """SELECT line, position, text FROM dba_errors
-                             WHERE owner = :o AND name = :n AND type = :t ORDER BY sequence""",
-                  o=m.group(2).upper(), n=m.group(3).upper(), t=re.sub(r"\s+", " ", m.group(1).upper()))
+    try:
+        rows = _query(conn, """SELECT line, position, text FROM dba_errors
+                                 WHERE owner = :o AND name = :n AND type = :t ORDER BY sequence""",
+                      o=m.group(2).upper(), n=m.group(3).upper(), t=re.sub(r"\s+", " ", m.group(1).upper()))
+    except oracledb.DatabaseError:
+        return "  (detalle no disponible: la cuenta ejecutora no tiene lectura de DBA_ERRORS)"
     return "\n".join(f"  línea {r['line']}:{r['position']} {r['text']}" for r in rows)
 
 

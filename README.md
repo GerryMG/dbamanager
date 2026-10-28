@@ -21,30 +21,19 @@ Es **una sola aplicación**: el backend (FastAPI) sirve también la interfaz web
 ```
 backend/    API, generación de SQL, flujo de aprobación (Python)
 frontend/   interfaz web (React + Mantine); se compila y la sirve el backend
-scripts/    arranque local y scripts SQL para preparar Oracle
-docs/       guía de Keycloak
+scripts/    arranque local (Linux/macOS y Windows)
+docs/       qué debe existir en Oracle y en Keycloak
 demo/       infraestructura opcional de prueba (Oracle y Keycloak en Docker)
 ```
 
 ## Preparar los servidores
 
-1. **Metadata:** en un Oracle 12.1+, como SYSDBA (en la PDB elegida), ejecuta:
+Qué debe existir antes de arrancar:
 
-   ```sql
-   @scripts/oracle/usuario_metadata.sql "<clave DBAMGR>" USERS
-   ```
-
-   Las tablas las crea DBA Manager al arrancar.
-2. **Bases a administrar:** en cada una, como SYSDBA, ejecuta:
-
-   ```sql
-   @scripts/oracle/cuentas_servicio.sql "<clave catálogo>" "<clave ejecutora>"
-   ```
-
-   Crea estas cuentas:
-   - `DBAMGR_CATALOG`: solo lee el diccionario y no puede leer datos.
-   - `DBAMGR_EXEC`: privilegios de DDL; únicamente ejecuta lo aprobado.
-3. **Keycloak:** sigue [docs/KEYCLOAK.md](docs/KEYCLOAK.md). Basta un usuario administrador de tu realm; no hace falta `master`.
+1. **Oracle:** sigue [docs/ORACLE.md](docs/ORACLE.md).
+   - **Metadata:** un usuario dedicado; DBA Manager crea ahí sus tablas.
+   - **Cada base a administrar:** una cuenta de solo lectura del diccionario y, si se quiere ejecutar desde la app, una cuenta ejecutora con los privilegios de las operaciones que se permitan.
+2. **Keycloak:** sigue [docs/KEYCLOAK.md](docs/KEYCLOAK.md). Basta un usuario administrador de tu realm; no hace falta `master`.
 
 ## Configuración
 
@@ -159,7 +148,7 @@ Lo que no tiene formulario (subparticiones, índices globales particionados, `CR
   El editor tampoco ofrece tipos de dato que la versión no tiene.
 - Probado en vivo contra **Oracle 23ai** (DEVPDB/PRODPDB) y **Oracle 18c XE**. Las reglas de 12.1 y 12.2 se verificaron con conexiones de versión simulada; no existe imagen gratuita de 12c para pruebas en vivo.
 - Para repetir la prueba en 18c: `docker compose -f demo/docker-compose.yml --env-file .env --profile compat up -d oracle18`.
-- `scripts/oracle/cuentas_servicio.sql` se adapta a la versión: en 12.1.0.1 usa `SELECT ANY TABLE` en lugar de `READ ANY TABLE`.
+- En 12.1.0.1 no existe `READ ANY TABLE`: donde la guía lo pide, se usa `SELECT ANY TABLE` (ver [docs/ORACLE.md](docs/ORACLE.md)).
 - El driver `python-oracledb` en modo *thin* soporta servidores 12.1+. Si una cuenta solo tiene verificador de contraseña 10G (muy antiguo), hay que restablecer su contraseña.
 
 ## Metadata: migraciones y respaldo
