@@ -14,6 +14,7 @@ class ConnInfo:
     # Usuario de DBA Manager que origina la sesión (se propaga como client_identifier/auditoría)
     app_user: str | None = None
     excluded_schemas: set[str] = field(default_factory=set)
+    tls: bool = False  # conexión cifrada (tcps)
 
 
 @dataclass
@@ -80,6 +81,10 @@ class EngineAdapter(ABC):
 
     def server_version(self, info: ConnInfo) -> str | None:
         return None
+
+    def oracle_maintained(self, info: ConnInfo, names: set[str]) -> set[str]:
+        """Esquemas internos del motor entre `names` (no se permiten cambios en ellos)."""
+        return set()
 
     @abstractmethod
     def preflight(self, info: ConnInfo, ops: list) -> list[Finding]: ...

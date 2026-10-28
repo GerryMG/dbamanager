@@ -22,7 +22,7 @@ Es **una sola aplicación**: el backend (FastAPI) sirve también la interfaz web
 backend/    API, generación de SQL, flujo de aprobación (Python)
 frontend/   interfaz web (React + Mantine); se compila y la sirve el backend
 scripts/    arranque local (Linux/macOS y Windows)
-docs/       qué debe existir en Oracle y en Keycloak
+docs/       qué debe existir en Oracle y en Keycloak, y la guía de seguridad
 demo/       infraestructura opcional de prueba (Oracle y Keycloak en Docker)
 ```
 
@@ -34,6 +34,7 @@ Qué debe existir antes de arrancar:
    - **Metadata:** un usuario dedicado; DBA Manager crea ahí sus tablas.
    - **Cada base a administrar:** una cuenta de solo lectura del diccionario y, si se quiere ejecutar desde la app, una cuenta ejecutora con los privilegios de las operaciones que se permitan.
 2. **Keycloak:** sigue [docs/KEYCLOAK.md](docs/KEYCLOAK.md). Basta un usuario administrador de tu realm; no hace falta `master`.
+3. **Seguridad:** antes de producción, revisa la lista de verificación de [docs/SEGURIDAD.md](docs/SEGURIDAD.md).
 
 ## Configuración
 
@@ -81,7 +82,9 @@ Copy-Item .env.example .env
 | `dba_admin` | Aprobar/ejecutar cualquier solicitud |
 | `admin` | Conexiones, usuarios y roles, alcances, proyectos, respaldos |
 
-- Quien solicita nunca aprueba lo suyo.
+- Quien solicita nunca aprueba lo suyo. Un admin no puede cambiar sus propios roles ni asignarse alcances.
+- SQL personalizado, código PL/SQL, creación de usuarios y sinónimos públicos solo los aprueba y ejecuta un `dba_admin`.
+- Nunca se aceptan solicitudes sobre esquemas internos de Oracle, las cuentas de servicio ni la metadata.
 - En **Administración → Usuarios y roles** el admin asigna los roles con su propio usuario de Keycloak (`KEYCLOAK_ROLES_ADMIN_MODE=token`). Ver el paso 6 de [docs/KEYCLOAK.md](docs/KEYCLOAK.md).
 
 ### Permiso de ejecutar
@@ -89,6 +92,8 @@ Copy-Item .env.example .env
 Ejecutar desde la app (con la cuenta privilegiada) viene **desactivado para todos**:
 
 - **Solo el propio DBA puede activarlo para sí mismo**, desde el menú de su usuario → *Ejecución desde la app*, escribiendo `ACTIVAR`.
+- Para activarlo debe haber iniciado sesión hace poco (`REAUTH_MINUTES`). Se desactiva solo después de `SELF_EXECUTION_HOURS`.
+- Cada aprobación sella el SQL y la base destino: si algo cambia después de aprobar, no se ejecuta y hay que volver a aprobar.
 - No existe forma de que otra persona lo active por él, ni siquiera un admin.
 - Al restaurar un respaldo de metadata, vuelve a quedar desactivado para todos.
 - Cada activación o desactivación queda en la bitácora.
@@ -114,7 +119,9 @@ Lo que no tiene formulario (subparticiones, índices globales particionados, `CR
 `Borrador → Pendiente de aprobación → Aprobada → Ejecutada` (con *Cambios solicitados*, *Rechazada*, *Falló* → reintentar, *Cancelada*).
 
 - Motivo (¿por qué?), finalidad (¿para qué?), proyecto y ticket quedan ligados a la solicitud.
-- Quien solicita nunca aprueba lo suyo. Un `dba` necesita alcance sobre **todos** los esquemas afectados; un `dba_admin` aprueba todo. Las aprobaciones requeridas se configuran por conexión.
+- Quien solicita nunca aprueba lo suyo. Un admin no puede cambiar sus propios roles ni asignarse alcances.
+- SQL personalizado, código PL/SQL, creación de usuarios y sinónimos públicos solo los aprueba y ejecuta un `dba_admin`.
+- Nunca se aceptan solicitudes sobre esquemas internos de Oracle, las cuentas de servicio ni la metadata. Un `dba` necesita alcance sobre **todos** los esquemas afectados; un `dba_admin` aprueba todo. Las aprobaciones requeridas se configuran por conexión.
 - El SQL se genera desde formularios con identificadores validados; lo que se aprueba es exactamente lo que se ejecuta. Editar la solicitud invalida las aprobaciones.
 - **Importar SQL**: en el editor se puede pegar o subir un `.sql` (CREATE TABLE, GRANT/REVOKE, sinónimos, CREATE USER, ALTER TABLE ADD/MODIFY/DROP COLUMN, índices, procedimientos/vistas, DROP…). Se convierte en operaciones visuales editables; las FK, UNIQUE y CHECK se agregan como `ALTER TABLE` después de la tabla, y lo que no puede representarse sin cambiar su significado (tipos no soportados, particiones, nombres entre comillas con minúsculas, secuencias…) queda tal cual como SQL personalizado. Cada operación importada muestra notas de lo que se ajustó.
 - "Validar contra la base" revisa el diccionario: objetos o usuarios inexistentes, FKs que impiden un `DROP`, sinónimos que quedarían inválidos, etc.

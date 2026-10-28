@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { getToken } from "./auth";
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public details?: FieldError[]) {
+  constructor(public status: number, message: string, public details?: FieldError[], public code?: string) {
     super(message);
   }
 }
@@ -26,6 +26,7 @@ async function request<T>(method: string, path: string, body?: unknown, raw = fa
   if (!res.ok) {
     let message = `Error ${res.status}`;
     let details: FieldError[] | undefined;
+    let code: string | undefined;
     try {
       const data = await res.json();
       const d = data.detail;
@@ -33,13 +34,14 @@ async function request<T>(method: string, path: string, body?: unknown, raw = fa
       else if (d?.message) {
         message = d.message;
         details = d.errors;
+        code = d.code;
       } else if (Array.isArray(d)) {
         message = d.map((e: { loc: string[]; msg: string }) => `${e.loc.slice(1).join(".")}: ${e.msg}`).join("; ");
       }
     } catch {
       /* respuesta sin JSON */
     }
-    throw new ApiError(res.status, message, details);
+    throw new ApiError(res.status, message, details, code);
   }
   return (raw ? res.text() : res.json()) as Promise<T>;
 }
@@ -75,6 +77,7 @@ export interface Me {
   is_dba: boolean;
   is_dba_admin: boolean;
   can_execute: boolean;
+  can_execute_until: string | null;
   scopes: { connection_id: number; schema_name: string }[];
 }
 
@@ -108,6 +111,7 @@ export interface Connection {
   exec_user: string | null;
   has_exec_account: boolean;
   allow_execution: boolean;
+  use_tls: boolean;
   required_approvals: number;
   active: boolean;
   server_version: string | null;

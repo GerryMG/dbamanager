@@ -21,10 +21,13 @@ def conn_info(conn: DbConnection, role: str, app_user: str | None = None) -> Con
         user, password = conn.exec_user, decrypt(conn.exec_password_enc)
     else:
         user, password = conn.catalog_user, decrypt(conn.catalog_password_enc)
-    service_accounts = {conn.catalog_user.upper()} | ({conn.exec_user.upper()} if conn.exec_user else set())
+    from app.core.config import get_settings
+
+    service_accounts = {conn.catalog_user.upper(), get_settings().metadata_user.upper()} | (
+        {conn.exec_user.upper()} if conn.exec_user else set())
     return ConnInfo(
         host=conn.host, port=conn.port, service_name=conn.service_name, user=user, password=password or "",
-        app_user=app_user, excluded_schemas=service_accounts,
+        app_user=app_user, excluded_schemas=service_accounts, tls=bool(conn.use_tls),
     )
 
 

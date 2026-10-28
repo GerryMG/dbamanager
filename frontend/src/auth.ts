@@ -130,7 +130,8 @@ async function tokenRequest(params: Record<string, string>): Promise<Tokens> {
   };
 }
 
-export async function login(): Promise<never> {
+/** `force`: pide la contraseña aunque haya sesión abierta en Keycloak (reautenticación). */
+export async function login(force = false): Promise<never> {
   const state = randomString(24);
   const verifier = randomString(48);
   const challenge = b64url(await sha256(verifier));
@@ -144,6 +145,7 @@ export async function login(): Promise<never> {
     state,
     code_challenge: challenge,
     code_challenge_method: "S256",
+    ...(force ? { prompt: "login" } : {}),
   }).toString();
   window.location.assign(url.toString());
   return new Promise<never>(() => {});

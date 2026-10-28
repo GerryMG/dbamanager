@@ -27,7 +27,8 @@ fi
 # PORT y LOG_LEVEL se pueden definir en .env (el resto lo lee la aplicación directamente de .env)
 PORT=${PORT:-$(grep -E '^PORT=' .env | tail -1 | cut -d= -f2 || true)}
 LOG_LEVEL=${LOG_LEVEL:-$(grep -E '^LOG_LEVEL=' .env | tail -1 | cut -d= -f2 || true)}
-export PORT=${PORT:-8080} LOG_LEVEL=${LOG_LEVEL:-info}
+FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-$(grep -E '^FORWARDED_ALLOW_IPS=' .env | tail -1 | cut -d= -f2 || true)}
+export PORT=${PORT:-8080} LOG_LEVEL=${LOG_LEVEL:-info} FORWARDED_ALLOW_IPS=${FORWARDED_ALLOW_IPS:-127.0.0.1}
 export PATH="$PWD/backend/.venv/bin:$PATH"
 echo ">> DBA Manager en http://localhost:$PORT"
 exec backend/start.sh

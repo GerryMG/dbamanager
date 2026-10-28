@@ -25,7 +25,7 @@ def set_my_execution(data: SelfExecutionIn, db: Session = Depends(get_db), user:
     if data.enabled and data.confirm.strip().upper() != "ACTIVAR":
         raise HTTPException(422, "Para activarla escribe ACTIVAR")
     workflow.set_self_execution(db, user, data.enabled)
-    return {"can_execute": data.enabled}
+    return {"can_execute": data.enabled, "until": workflow.self_execution_until(db, user.username) or None}
 
 
 @router.get("/me")
@@ -37,6 +37,7 @@ def me(db: Session = Depends(get_db), user: CurrentUser = Depends(get_current_us
         "is_dba_admin": user.is_dba_admin,
         "scopes": [{"connection_id": s.connection_id, "schema_name": s.schema_name} for s in scopes],
         "can_execute": workflow.self_execution_enabled(db, user.username),
+        "can_execute_until": (lambda u: u if u not in (False, None) else None)(workflow.self_execution_until(db, user.username)),
     }
 
 

@@ -37,9 +37,15 @@ https://<tu-keycloak>/admin/<tu-realm>/console/
 
 > Para probar en tu máquina, agrega también `http://localhost:8080/*` en las URIs y `http://localhost:8080` en *Web origins*. Usa el puerto definido en `PORT`.
 
-## Paso 2. Activar PKCE
+## Paso 2. Activar PKCE y endurecer el realm
 
 En el cliente `dbamanager-web` → pestaña **Advanced** → sección *Advanced settings* → **Proof Key for Code Exchange Code Challenge Method**: `S256`. Clic en **Save**.
+
+Recomendado en el realm (si tienes permiso, o pídeselo a quien lo administra):
+
+- **Realm settings → Security defenses → Brute force detection**: activado, para bloquear intentos repetidos de contraseña.
+- **Realm settings → Sessions**: una duración razonable de sesión (por ejemplo, 8 horas máximo y 30 minutos de inactividad).
+- **Realm settings → Tokens → Access Token Lifespan**: corto (por ejemplo, 5 minutos). La app lo renueva sola.
 
 ## Paso 3. Hacer que el token sea "para" DBA Manager (audience)
 

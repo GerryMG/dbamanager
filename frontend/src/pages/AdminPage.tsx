@@ -38,7 +38,7 @@ type ConnForm = Omit<Connection, "id" | "has_exec_account" | "server_version"> &
 const emptyConn: ConnForm = {
   name: "", engine: "oracle", environment: "DEV", description: "", host: "", port: 1521, service_name: "",
   catalog_user: "DBAMGR_CATALOG", catalog_password: "", exec_user: "DBAMGR_EXEC", exec_password: "",
-  allow_execution: false, required_approvals: 1, active: true,
+  allow_execution: false, use_tls: false, required_approvals: 1, active: true,
 };
 
 function ConnectionsAdmin() {
@@ -131,6 +131,7 @@ function ConnectionsAdmin() {
             </SimpleGrid>
             <Group>
               <Switch label="Permitir ejecución desde DBA Manager" description="Además, cada DBA debe activarla para sí mismo" checked={f.allow_execution} disabled={!f.exec_user} onChange={(e) => setF({ allow_execution: e.currentTarget.checked })} />
+              <Switch label="Conexión cifrada (TLS / tcps)" checked={f.use_tls} onChange={(e) => setF({ use_tls: e.currentTarget.checked })} />
               <NumberInput label="Aprobaciones requeridas" w={170} min={1} max={5} value={f.required_approvals} onChange={(v) => setF({ required_approvals: Number(v) })} />
               <Switch label="Activa" checked={f.active} onChange={(e) => setF({ active: e.currentTarget.checked })} />
             </Group>

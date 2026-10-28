@@ -36,6 +36,7 @@ class UserSetting(Base):
     # solo el propio DBA puede activarlo para sí mismo.
     can_execute: Mapped[bool] = mapped_column(Boolean, default=False)
     can_execute_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    can_execute_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # vencimiento
 
 
 class DbConnection(Base):
@@ -57,6 +58,7 @@ class DbConnection(Base):
     exec_user: Mapped[str | None] = mapped_column(String(128))
     exec_password_enc: Mapped[str | None] = mapped_column(Text)
     allow_execution: Mapped[bool] = mapped_column(Boolean, default=False)
+    use_tls: Mapped[bool] = mapped_column(Boolean, default=False)  # conexión cifrada (tcps)
     # Versión del servidor (p. ej. 19.21.0.0.0), detectada al conectar; define qué sintaxis se permite
     server_version: Mapped[str | None] = mapped_column(String(40))
     required_approvals: Mapped[int] = mapped_column(Integer, default=1)
@@ -150,6 +152,8 @@ class Approval(Base):
     decision: Mapped[str] = mapped_column(String(30))  # APPROVED / REJECTED / CHANGES_REQUESTED
     comment: Mapped[str | None] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True)  # se invalida si la solicitud se re-edita
+    # Sello HMAC del SQL aprobado + base destino: si algo cambia después, la aprobación deja de valer
+    content_hash: Mapped[str | None] = mapped_column(String(64))
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

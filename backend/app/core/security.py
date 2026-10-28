@@ -36,6 +36,7 @@ class CurrentUser:
     roles: set[str] = field(default_factory=set)
     ip: str | None = None
     access_token: str | None = field(default=None, repr=False)  # para administrar roles en modo token
+    auth_time: int | None = None  # momento del último inicio de sesión real (no de la renovación del token)
 
     @property
     def is_admin(self) -> bool:
@@ -111,9 +112,24 @@ def get_current_user(
         roles=roles,
         ip=request.client.host if request.client else None,
         access_token=creds.credentials,
+        auth_time=claims.get("auth_time"),
     )
+    if not user.roles:
+        # Estar en el realm no basta: sin un rol de DBA Manager no se accede a nada.
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Tu usuario no tiene ningún rol de DBA Manager; pide acceso a un administrador")
     _touch_user(db, user)
     return user
+
+
+def require_recent_login(user: CurrentUser, minutes: int) -> None:
+    """Para acciones sensibles: exige haber iniciado sesión (con contraseña) hace poco."""
+    import time
+
+    if not user.auth_time or time.time() - user.auth_time > minutes * 60:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
+                            {"code": "REAUTH_REQUIRED",
+                             "message": f"Por seguridad, vuelve a iniciar sesión (máximo {minutes} min) para esta acción"})
 
 
 def require_admin(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:

@@ -20,15 +20,31 @@ class Settings(BaseSettings):
     static_dir: str | None = None
     cors_origins: str = ""
     log_level: str = "info"
+    # Documentación interactiva de la API (/api/docs). Apagada por defecto: expone el mapa de endpoints.
+    api_docs_enabled: bool = False
+    # IPs de proxies confiables para X-Forwarded-For (IP en la bitácora). "*" solo detrás de un proxy propio.
+    forwarded_allow_ips: str = "127.0.0.1"
 
     # ---- Metadata de DBA Manager (Oracle externo) ----
     metadata_url: str | None = None
-    metadata_dsn: str | None = None
+    metadata_dsn: str | None = None  # host:puerto/servicio, o tcps://host:puerto/servicio para TLS
     metadata_user: str = "DBAMGR"
     dbamgr_password: str = ""
 
     # ---- Seguridad ----
     secrets_key: str
+    # Horas que dura la ejecución desde la app tras activarla (0 = sin vencimiento)
+    self_execution_hours: int = 8
+    # Minutos máximos desde el último inicio de sesión para poder activar la ejecución propia
+    reauth_minutes: int = 10
+    # Permitir restaurar un respaldo REEMPLAZANDO la metadata existente (borra la bitácora actual)
+    metadata_restore_replace: bool = False
+    # Tamaño máximo del archivo de respaldo a restaurar (MB)
+    restore_max_mb: int = 50
+    # Máximo de operaciones por solicitud
+    max_operations: int = 200
+    # Esquemas adicionales que nunca pueden ser objeto de una solicitud (separados por coma)
+    protected_schemas: str = ""
 
     # ---- Keycloak / OIDC ----
     keycloak_public_url: str = "http://localhost:8180"
@@ -73,8 +89,18 @@ class Settings(BaseSettings):
             return self.metadata_url
         if not self.metadata_dsn:
             raise RuntimeError("Falta METADATA_DSN (host:puerto/servicio de la metadata) o METADATA_URL")
-        host_port, service = self.metadata_dsn.split("/", 1)
-        return f"oracle+oracledb://{self.metadata_user}:{self.dbamgr_password}@{host_port}/?service_name={service}"
+        return "oracle+oracledb://"  # usuario, clave y DSN van en metadata_connect_args (sin escapar en URL)
+
+    @property
+    def metadata_connect_args(self) -> dict:
+        """Credenciales y DSN aparte de la URL: admite claves con caracteres especiales y DSN con tcps://."""
+        if self.metadata_url:
+            return {}
+        return {"user": self.metadata_user, "password": self.dbamgr_password, "dsn": self.metadata_dsn}
+
+    @property
+    def metadata_target(self) -> str:
+        return self.metadata_url.split("@")[-1] if self.metadata_url else f"{self.metadata_user}@{self.metadata_dsn}"
 
     @property
     def keycloak_backend_url(self) -> str:

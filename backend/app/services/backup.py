@@ -1,14 +1,18 @@
-"""Respaldo y migración de la metadata en JSON portable.
+"""Respaldo y migración de la metadata en JSON portable, firmado.
 
 El JSON no depende del motor: sirve para respaldar, restaurar en otra instancia o migrar la
 metadata a otro motor (definiendo METADATA_URL y corriendo `alembic upgrade head` + import).
 Las contraseñas de conexiones viajan cifradas: el destino necesita la misma SECRETS_KEY.
 """
+import hashlib
+import hmac
+import json
 from datetime import date, datetime, timezone
 
 from sqlalchemy import DateTime, func, inspect, select, text
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import ALL_TABLES_IN_ORDER
 
 FORMAT = "dbamanager-metadata"
@@ -32,10 +36,19 @@ def export_metadata(db: Session) -> dict:
         cols = [c.key for c in inspect(model).column_attrs]
         rows = db.scalars(select(model)).all()
         tables[model.__tablename__] = [{c: _ser(getattr(r, c)) for c in cols} for r in rows]
-    return {
+    out = {
         "format": FORMAT, "version": VERSION, "alembic_revision": alembic_rev,
         "exported_at": datetime.now(timezone.utc).isoformat(), "tables": tables,
     }
+    out["signature"] = _sign(out)
+    return out
+
+
+def _sign(data: dict) -> str:
+    """HMAC con SECRETS_KEY: un respaldo editado a mano (p. ej. con aprobaciones inventadas) no se puede restaurar."""
+    body = {k: v for k, v in data.items() if k != "signature"}
+    canon = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
+    return hmac.new(get_settings().secrets_key.encode(), canon, hashlib.sha256).hexdigest()
 
 
 def _parse(model, row: dict) -> dict:
@@ -61,6 +74,8 @@ def import_metadata(db: Session, data: dict, replace: bool) -> dict:
         raise ValueError("El archivo no es un respaldo de DBA Manager")
     if data.get("version") != VERSION:
         raise ValueError(f"Versión de respaldo no soportada: {data.get('version')}")
+    if not isinstance(data.get("signature"), str) or not hmac.compare_digest(data["signature"], _sign(data)):
+        raise ValueError("Firma del respaldo inválida: el archivo fue modificado o se generó con otra SECRETS_KEY")
     if not is_empty(db):
         if not replace:
             raise ValueError("La metadata destino no está vacía; usa replace=true para sobrescribirla")
@@ -79,7 +94,16 @@ def import_metadata(db: Session, data: dict, replace: bool) -> dict:
     from app.models import UserSetting
 
     for row in db.scalars(select(UserSetting)).all():
-        row.can_execute = False
+        row.can_execute, row.can_execute_until = False, None
+    # Lo que estaba aprobado y sin ejecutar debe volver a aprobarse en esta instalación.
+    from app.models import Approval, ChangeRequest
+
+    for req in db.scalars(select(ChangeRequest).where(
+            ChangeRequest.status.in_(("APPROVED", "FAILED", "EXECUTING", "PENDING_APPROVAL")))).all():
+        req.status = "PENDING_APPROVAL"
+    for a in db.scalars(select(Approval).join(ChangeRequest, Approval.request_id == ChangeRequest.id).where(
+            ChangeRequest.status == "PENDING_APPROVAL")).all():
+        a.active = False
     _reset_identities(db)
     db.commit()
     return counts

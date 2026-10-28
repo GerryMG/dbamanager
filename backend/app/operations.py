@@ -28,8 +28,11 @@ def qualified(value: str) -> str:
     return ".".join(ident(p) for p in (value or "").split("."))
 
 
-def safe_expr(value: str | None, what: str = "La expresión") -> str | None:
-    """Expresión SQL libre: sin ';' ni comentarios fuera de literales, comillas y paréntesis balanceados."""
+def safe_expr(value: str | None, what: str = "La expresión", allow_list: bool = False) -> str | None:
+    """Expresión SQL libre: sin ';' ni comentarios fuera de literales, comillas y paréntesis balanceados.
+
+    Salvo `allow_list`, tampoco admite comas fuera de paréntesis: una expresión de DEFAULT, CHECK,
+    columna virtual o índice no puede "cerrarse" y agregar otra columna o cláusula."""
     if value is None or value.strip() == "":
         return None
     v = value.strip()
@@ -45,8 +48,12 @@ def safe_expr(value: str | None, what: str = "La expresión") -> str | None:
         depth -= c == ")"
         if depth < 0:
             break
+        if c == "," and depth == 0 and not allow_list:
+            raise ValueError(f"{what} no puede tener comas fuera de paréntesis")
     if depth != 0:
         raise ValueError(f"{what} tiene paréntesis desbalanceados")
+    if len(v) > 4000:
+        raise ValueError(f"{what} es demasiado larga (máximo 4000 caracteres)")
     return v
 
 
@@ -158,7 +165,7 @@ class PartitionDef(_Model):
     tablespace: str | None = None
     v_n = field_validator("name")(lambda cls, v: ident(v))
     v_ts = field_validator("tablespace")(lambda cls, v: opt_ident(v))
-    v_v = field_validator("values")(lambda cls, v: safe_expr(v, "Los valores de la partición"))
+    v_v = field_validator("values")(lambda cls, v: safe_expr(v, "Los valores de la partición", allow_list=True))
 
 
 class Partitioning(_Model):

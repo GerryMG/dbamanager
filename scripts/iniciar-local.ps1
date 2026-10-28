@@ -33,6 +33,7 @@ function Get-EnvValue($name, $default) {
 }
 $port = Get-EnvValue "PORT" "8080"
 $log = Get-EnvValue "LOG_LEVEL" "info"
+$proxies = Get-EnvValue "FORWARDED_ALLOW_IPS" "127.0.0.1"
 
 Set-Location backend
 $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
@@ -40,4 +41,4 @@ $env:PATH = "$PWD\.venv\Scripts;$env:PATH"
 & alembic upgrade head; if ($LASTEXITCODE -ne 0) { exit 1 }
 & python -m app.seed
 Write-Host ">> DBA Manager en http://localhost:$port"
-& uvicorn app.main:app --host 0.0.0.0 --port $port --proxy-headers --log-level $log
+& uvicorn app.main:app --host 0.0.0.0 --port $port --proxy-headers --forwarded-allow-ips $proxies --log-level $log --no-server-header

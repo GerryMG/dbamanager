@@ -1,11 +1,11 @@
-import { ActionIcon, AppShell, Badge, Burger, Group, Menu, NavLink, Text, Title, useMantineColorScheme } from "@mantine/core";
+import { ActionIcon, AppShell, Badge, Burger, Button, Center, Group, Menu, NavLink, Stack, Text, Title, useMantineColorScheme } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
 import {
-  IconDatabase, IconFilePlus, IconPlayerPlay, IconHistory, IconListCheck, IconLogout, IconMoon, IconSettings, IconSun, IconUserCircle,
+  IconDatabase, IconFilePlus, IconLock, IconPlayerPlay, IconHistory, IconListCheck, IconLogout, IconMoon, IconSettings, IconSun, IconUserCircle,
 } from "@tabler/icons-react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { api, RequestSummary, useMe } from "./api";
+import { api, ApiError, RequestSummary, useMe } from "./api";
 import { logout } from "./auth";
 import MyExecutionModal from "./components/MyExecutionModal";
 import AdminPage from "./pages/AdminPage";
@@ -18,7 +18,7 @@ import RequestsPage from "./pages/RequestsPage";
 export default function App() {
   const [opened, { toggle, close }] = useDisclosure();
   const [execOpen, execModal] = useDisclosure();
-  const { data: me } = useMe();
+  const { data: me, error: meError } = useMe();
   const nav = useNavigate();
   const { pathname } = useLocation();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
@@ -46,6 +46,19 @@ export default function App() {
       }}
     />
   );
+
+  if (meError instanceof ApiError && meError.status === 403) {
+    return (
+      <Center h="100vh">
+        <Stack align="center" gap="sm" maw={460} ta="center">
+          <IconLock size={40} color="var(--mantine-color-gray-6)" />
+          <Title order={3}>Sin acceso a DBA Manager</Title>
+          <Text c="dimmed">{meError.message}</Text>
+          <Button variant="default" onClick={logout}>Cerrar sesión</Button>
+        </Stack>
+      </Center>
+    );
+  }
 
   return (
     <AppShell header={{ height: 56 }} navbar={{ width: 240, breakpoint: "sm", collapsed: { mobile: !opened } }} padding="md">

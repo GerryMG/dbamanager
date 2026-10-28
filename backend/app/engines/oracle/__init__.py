@@ -28,7 +28,7 @@ _INTERNAL_FILTER = """
 def _connect(info: ConnInfo, action: str, call_timeout_ms: int = 60_000):
     conn = oracledb.connect(
         user=info.user, password=info.password,
-        dsn=f"{info.host}:{info.port}/{info.service_name}", tcp_connect_timeout=10,
+        dsn=f"{'tcps://' if info.tls else ''}{info.host}:{info.port}/{info.service_name}", tcp_connect_timeout=10,
     )
     try:
         conn.call_timeout = call_timeout_ms
@@ -70,6 +70,12 @@ class OracleAdapter(EngineAdapter):
     def _excluded(self, info: ConnInfo) -> list[str]:
         return sorted({s.upper() for s in info.excluded_schemas} | _ALWAYS_EXCLUDED)
 
+    def _check_schema(self, conn, info: ConnInfo, owner: str) -> None:
+        """El explorador no muestra esquemas internos de Oracle ni las cuentas de servicio de DBA Manager."""
+        if owner in self._excluded(info) or _query(
+                conn, "SELECT 1 FROM dba_users WHERE username = :u AND oracle_maintained = 'Y'", u=owner):
+            raise PermissionError(f"El esquema {owner} no está disponible en el explorador")
+
     # ------------------------------------------------------------------ conexión
     def test_connection(self, info: ConnInfo) -> dict:
         with _connect(info, "test") as conn:
@@ -88,6 +94,16 @@ class OracleAdapter(EngineAdapter):
                 "container": row[0]["container"] if row else None,
                 "session_privileges": [p["privilege"] for p in privs],
             }
+
+    def oracle_maintained(self, info: ConnInfo, names: set[str]) -> set[str]:
+        """Cuáles de estos esquemas son internos de Oracle según el diccionario."""
+        if not names:
+            return set()
+        binds = {f"u{i}": n for i, n in enumerate(sorted(names))}
+        with _connect(info, "guard") as conn:
+            rows = _query(conn, f"SELECT username FROM dba_users WHERE oracle_maintained = 'Y' AND username IN "
+                                f"({', '.join(':' + k for k in binds)})", **binds)
+        return {r["username"] for r in rows}
 
     def server_version(self, info: ConnInfo) -> str:
         with _connect(info, "version") as conn:
@@ -132,12 +148,14 @@ class OracleAdapter(EngineAdapter):
                                      'PACKAGE','SYNONYM','TRIGGER','TYPE')
              ORDER BY o.object_type, o.object_name"""
         with _connect(info, "list_objects") as conn:
+            self._check_schema(conn, info, schema.upper())
             return _query(conn, sql, owner=schema.upper())
 
     def describe_table(self, info: ConnInfo, schema: str, name: str) -> dict:
         owner, table = schema.upper(), name.upper()
         b = {"owner": owner, "name": table}
         with _connect(info, "describe_table") as conn:
+            self._check_schema(conn, info, owner)
             obj = _query(conn, """
                 SELECT o.object_type AS type, o.status, o.created, o.last_ddl_time, tc.comments,
                        t.tablespace_name, t.partitioned, t.temporary, t.duration, t.compression, t.compress_for,
@@ -313,6 +331,7 @@ class OracleAdapter(EngineAdapter):
     def describe_user(self, info: ConnInfo, schema: str) -> dict:
         owner = schema.upper()
         with _connect(info, "describe_user") as conn:
+            self._check_schema(conn, info, owner)
             account = _query(conn, """
                 SELECT username, account_status, created, default_tablespace, temporary_tablespace, profile,
                        lock_date, expiry_date, authentication_type
@@ -345,6 +364,7 @@ class OracleAdapter(EngineAdapter):
             raise ValueError(f"Tipo de objeto no soportado: {object_type}")
         md_type = _DDL_TYPE.get(otype, otype)
         with _connect(info, "get_ddl") as conn, conn.cursor() as cur:
+            self._check_schema(conn, info, schema.upper())
             cur.execute("""
                 BEGIN
                   DBMS_METADATA.SET_TRANSFORM_PARAM(DBMS_METADATA.SESSION_TRANSFORM, 'STORAGE', FALSE);

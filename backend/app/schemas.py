@@ -20,6 +20,7 @@ class ConnectionIn(BaseModel):
     exec_user: str | None = None
     exec_password: str | None = None
     allow_execution: bool = False
+    use_tls: bool = False
     required_approvals: int = Field(1, ge=1, le=5)
     active: bool = True
 
@@ -37,6 +38,7 @@ class ConnectionOut(BaseModel):
     exec_user: str | None
     has_exec_account: bool
     allow_execution: bool
+    use_tls: bool = False
     required_approvals: int
     active: bool
     server_version: str | None = None
@@ -48,7 +50,7 @@ class ConnectionOut(BaseModel):
             host=c.host, port=c.port, service_name=c.service_name, catalog_user=c.catalog_user,
             exec_user=c.exec_user, has_exec_account=bool(c.exec_user and c.exec_password_enc),
             allow_execution=c.allow_execution, required_approvals=c.required_approvals, active=c.active,
-            server_version=c.server_version,
+            server_version=c.server_version, use_tls=bool(c.use_tls),
         )
 
 
@@ -74,8 +76,8 @@ class RequestIn(BaseModel):
     title: str = Field(min_length=5, max_length=200)
     connection_id: int
     project_id: int | None = None
-    reason: str = Field(min_length=10, description="Por qué se necesita")
-    purpose: str | None = Field(None, description="Para qué / con qué fin")
+    reason: str = Field(min_length=10, max_length=4000, description="Por qué se necesita")
+    purpose: str | None = Field(None, max_length=4000, description="Para qué / con qué fin")
     ticket_ref: str | None = Field(None, max_length=100)
     operations: list[dict] = Field(min_length=1)
     submit: bool = False
@@ -90,12 +92,12 @@ class PreviewIn(BaseModel):
 class ImportSqlIn(BaseModel):
     connection_id: int
     sql: str = Field(min_length=1, max_length=500_000)
-    default_schema: str | None = Field(None, description="Esquema para objetos sin prefijo en el script")
+    default_schema: str | None = Field(None, max_length=128, description="Esquema para objetos sin prefijo en el script")
 
 
 class ReviewIn(BaseModel):
     decision: Literal["APPROVED", "REJECTED", "CHANGES_REQUESTED"]
-    comment: str | None = None
+    comment: str | None = Field(None, max_length=4000)
 
 
 class CommentIn(BaseModel):
@@ -103,16 +105,16 @@ class CommentIn(BaseModel):
 
 
 class CancelIn(BaseModel):
-    comment: str | None = None
+    comment: str | None = Field(None, max_length=4000)
 
 
 class ExecuteIn(BaseModel):
-    confirm_code: str
+    confirm_code: str = Field(max_length=40)
 
 
 class ManualExecutionIn(BaseModel):
-    confirm_code: str
-    notes: str
+    confirm_code: str = Field(max_length=40)
+    notes: str = Field(max_length=4000)
 
 
 def request_summary(r: ChangeRequest) -> dict:

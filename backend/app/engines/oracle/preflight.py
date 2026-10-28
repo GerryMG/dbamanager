@@ -169,7 +169,13 @@ class Preflight:
 
     def run(self, ops: list) -> list[Finding]:
         self._scan_future(ops)
+        from app.services.guard import op_schemas
+
         for self.seq, op in enumerate(ops, start=1):
+            internal = [x for x in sorted(op_schemas(op)) if x != "PUBLIC" and self.q(
+                "SELECT 1 FROM dba_users WHERE username = :u AND oracle_maintained = 'Y'", u=x)]
+            if internal:
+                self.add("error", f"Esquema interno de Oracle: {', '.join(internal)}; no se permiten cambios ahí")
             s = op.schema_name
             if op.type != "CREATE_USER" and not self.user_exists(s):
                 self.add("error", f"El esquema/usuario {s} no existe en esta base{self.later('user', s)}")

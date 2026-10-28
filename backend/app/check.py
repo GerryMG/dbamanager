@@ -35,12 +35,40 @@ def main() -> None:
         fail(f"Faltan variables obligatorias en .env: {missing}")
         return
 
+    # ---------------------------------------------------------------- secretos y configuración insegura
+    placeholders = {"change_me", "changeme", "cambiar", "password", "secret"}
+    try:
+        from cryptography.fernet import Fernet
+
+        Fernet(s.secrets_key.encode())
+    except Exception:  # noqa: BLE001
+        fail("SECRETS_KEY no es una llave válida (32 bytes en base64 url-safe). Genera una con: "
+             "python -c \"import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())\"")
+    for name, value in (("DBAMGR_PASSWORD", s.dbamgr_password), ("KEYCLOAK_ADMIN_CLIENT_SECRET", s.keycloak_admin_client_secret)):
+        if value and value.strip().lower() in placeholders:
+            fail(f"{name} tiene un valor de ejemplo ('{value}'): define uno real")
+    pub = s.keycloak_public_url.lower()
+    if pub.startswith("http://") and not any(h in pub for h in ("://localhost", "://127.0.0.1")):
+        warn("KEYCLOAK_PUBLIC_URL usa http sin cifrar: en producción usa https para no exponer credenciales y tokens")
+    if s.audience is None:
+        warn("OIDC_AUDIENCE vacío: no se valida que los tokens sean para DBA Manager (configura el audience mapper)")
+    if s.api_docs_enabled:
+        warn("API_DOCS_ENABLED=true: la documentación de la API es pública (/api/docs); desactívala en producción")
+    if s.forwarded_allow_ips.strip() == "*":
+        warn("FORWARDED_ALLOW_IPS=*: la IP de la bitácora se toma de X-Forwarded-For; úsalo solo detrás de tu proxy")
+    if s.self_execution_hours == 0:
+        warn("SELF_EXECUTION_HOURS=0: la ejecución desde la app, una vez activada, no vence")
+    if s.metadata_restore_replace:
+        warn("METADATA_RESTORE_REPLACE=true: un admin puede reemplazar toda la metadata (incluida la bitácora)")
+
     # ---------------------------------------------------------------- metadata
     if not s.metadata_url and not (s.metadata_dsn and s.dbamgr_password):
         fail("Configura la base de metadata: METADATA_DSN=host:puerto/servicio y DBAMGR_PASSWORD "
              "(o METADATA_URL). Qué debe existir: docs/ORACLE.md")
-    target = s.metadata_url.split("@")[-1] if s.metadata_url else f"{s.metadata_user}@{s.metadata_dsn}"
-    connect_args = {"tcp_connect_timeout": 5} if s.sqlalchemy_url.startswith("oracle") else {}
+    target = s.metadata_target
+    connect_args = dict(s.metadata_connect_args)
+    if s.sqlalchemy_url.startswith("oracle"):
+        connect_args["tcp_connect_timeout"] = 5
     engine = create_engine(s.sqlalchemy_url, pool_pre_ping=True, connect_args=connect_args)
     last = None
     for attempt in range(1, 7):
@@ -86,7 +114,7 @@ def main() -> None:
                 ok("Administración de roles: cuenta de servicio válida")
             else:
                 warn(f"Administración de roles: Keycloak rechazó {s.keycloak_admin_client_id} ({r.status_code}). "
-                     "Ejecuta scripts/keycloak/configurar_cliente_admin.sh o revisa el secreto.")
+                     "Revisa el client id y el secreto (docs/KEYCLOAK.md).")
         except Exception as exc:  # noqa: BLE001
             warn(f"Administración de roles: sin respuesta de Keycloak ({exc})")
     elif s.keycloak_roles_admin_mode == "token":

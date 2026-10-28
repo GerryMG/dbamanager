@@ -10,9 +10,13 @@ Reglas:
   * `dba_admin` aprueba/ejecuta todo; `dba` solo si tiene alcance sobre TODOS los esquemas afectados.
   * El SQL aprobado es exactamente el que se ejecuta; editar la solicitud invalida aprobaciones.
   * Ejecutar exige confirmar tecleando el código de la solicitud.
+  * SQL libre, código PL/SQL, creación de usuarios y sinónimos públicos: solo dba_admin.
+  * Nunca se aceptan esquemas internos de Oracle, cuentas de servicio ni la metadata.
+  * Cada aprobación sella (HMAC) el SQL y la base destino; si cambian, hay que volver a aprobar.
 """
+import hmac
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from pydantic import TypeAdapter, ValidationError
@@ -24,6 +28,9 @@ from app.engines.base import Statement
 from app.models import (Approval, ApproverScope, ChangeRequest, DbConnection, Execution, RequestComment,
                         RequestOperation, UserSetting)
 from app.operations import Operation
+from app.core.config import get_settings
+from app.core.security import require_recent_login
+from app.services import guard
 from app.services.audit import audit
 from app.services.connections import conn_info, engine_for, server_version
 
@@ -65,6 +72,9 @@ def now() -> datetime:
 
 # ---------------------------------------------------------------- operaciones / SQL
 def parse_operations(raw_ops: list[dict]) -> list:
+    limit = get_settings().max_operations
+    if len(raw_ops) > limit:
+        raise HTTPException(422, f"Una solicitud admite como máximo {limit} operaciones")
     errors, parsed = [], []
     for i, raw in enumerate(raw_ops, start=1):
         try:
@@ -79,6 +89,7 @@ def parse_operations(raw_ops: list[dict]) -> list:
 
 
 def render_operations(db: Session, conn: DbConnection, parsed: list) -> list[list[Statement]]:
+    guard.check_protected(conn, parsed)
     engine = engine_for(conn)
     version = server_version(db, conn)
     out, errors = [], []
@@ -134,7 +145,8 @@ def _store_operations(db: Session, req: ChangeRequest, raw_ops: list[dict]) -> N
             statements=json.dumps([s.to_dict() for s in sts], ensure_ascii=False),
             status="PENDING",
         ))
-    req.target_schemas = ",".join(sorted({op.schema_name for op in parsed}))
+    # Alcance = todo esquema que se modifica o referencia (no solo el principal de cada operación)
+    req.target_schemas = ",".join(sorted(set().union(*(guard.op_schemas(op) for op in parsed))))
 
 
 # ---------------------------------------------------------------- permisos
@@ -153,28 +165,51 @@ def has_scope(db: Session, user: CurrentUser, connection_id: int, schemas: set[s
     return "*" in allowed or schemas <= allowed
 
 
-def can_review(db: Session, user: CurrentUser, req: ChangeRequest) -> bool:
-    return user.username != req.requested_by and has_scope(db, user, req.connection_id, schemas_of(req))
-
-
-def can_execute(db: Session, user: CurrentUser, req: ChangeRequest) -> bool:
+def _authorized(db: Session, user: CurrentUser, req: ChangeRequest) -> bool:
+    if guard.requires_principal(req) and not user.is_dba_admin:
+        return False
     return has_scope(db, user, req.connection_id, schemas_of(req))
 
 
-def self_execution_enabled(db: Session, username: str) -> bool:
-    """¿El usuario activó para sí mismo la ejecución desde DBA Manager? (desactivado por defecto)"""
+def can_review(db: Session, user: CurrentUser, req: ChangeRequest) -> bool:
+    return user.username != req.requested_by and _authorized(db, user, req)
+
+
+def can_execute(db: Session, user: CurrentUser, req: ChangeRequest) -> bool:
+    return _authorized(db, user, req)
+
+
+def self_execution_until(db: Session, username: str) -> datetime | None | bool:
+    """False = desactivada; None = activa sin vencimiento; datetime = activa hasta esa hora."""
     row = db.get(UserSetting, username)
-    return bool(row and row.can_execute)
+    if not row or not row.can_execute:
+        return False
+    until = row.can_execute_until
+    if until is not None and until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    if until is not None and until <= now():
+        return False
+    return until
+
+
+def self_execution_enabled(db: Session, username: str) -> bool:
+    """¿El usuario activó para sí mismo la ejecución desde DBA Manager y no ha vencido?"""
+    return self_execution_until(db, username) is not False
 
 
 def set_self_execution(db: Session, user: CurrentUser, enabled: bool) -> None:
     """Solo modifica la preferencia del propio usuario: no existe forma de cambiarla para otra persona."""
-    if enabled and not user.is_dba:
-        raise HTTPException(403, "Solo un DBA puede activar la ejecución desde DBA Manager")
+    s = get_settings()
+    if enabled:
+        if not user.is_dba:
+            raise HTTPException(403, "Solo un DBA puede activar la ejecución desde DBA Manager")
+        require_recent_login(user, s.reauth_minutes)
     row = db.get(UserSetting, user.username) or UserSetting(username=user.username)
     row.can_execute, row.can_execute_changed_at = enabled, now()
+    row.can_execute_until = (now() + timedelta(hours=s.self_execution_hours)) if enabled and s.self_execution_hours else None
     db.merge(row)
-    audit(db, user, "SELF_EXECUTION_ENABLED" if enabled else "SELF_EXECUTION_DISABLED", "user", user.username)
+    audit(db, user, "SELF_EXECUTION_ENABLED" if enabled else "SELF_EXECUTION_DISABLED", "user", user.username,
+          until=row.can_execute_until)
     db.commit()
 
 
@@ -244,6 +279,9 @@ def review(db: Session, user: CurrentUser, req: ChangeRequest, decision: str, co
         raise HTTPException(409, f"La solicitud está en estado {req.status}")
     if user.username == req.requested_by:
         raise HTTPException(403, "No puedes revisar tu propia solicitud")
+    if guard.requires_principal(req) and not user.is_dba_admin:
+        raise HTTPException(403, "Esta solicitud contiene SQL libre, código PL/SQL, usuarios o sinónimos públicos: "
+                                 "solo un DBA principal (dba_admin) puede aprobarla")
     if not can_review(db, user, req):
         raise HTTPException(403, "No tienes alcance de aprobación sobre los esquemas: " + ", ".join(sorted(schemas_of(req))))
     if decision != "APPROVED" and not (comment and comment.strip()):
@@ -251,7 +289,8 @@ def review(db: Session, user: CurrentUser, req: ChangeRequest, decision: str, co
     if any(a.active and a.approver == user.username for a in req.approvals):
         raise HTTPException(409, "Ya registraste tu decisión en esta solicitud")
 
-    req.approvals.append(Approval(approver=user.username, decision=decision, comment=comment, active=True))
+    req.approvals.append(Approval(approver=user.username, decision=decision, comment=comment, active=True,
+                                  content_hash=guard.fingerprint(req) if decision == "APPROVED" else None))
     if decision == "REJECTED":
         req.status, req.decided_at = "REJECTED", now()
     elif decision == "CHANGES_REQUESTED":
@@ -284,9 +323,28 @@ def _check_executable(db: Session, user: CurrentUser, req: ChangeRequest, confir
     if req.status not in EXECUTABLE:
         raise HTTPException(409, f"Solo se ejecutan solicitudes aprobadas (estado actual: {req.status})")
     if not can_execute(db, user, req):
-        raise HTTPException(403, "No tienes alcance para ejecutar en estos esquemas")
+        raise HTTPException(403, "No tienes alcance para ejecutar esta solicitud" +
+                            (" (requiere DBA principal)" if guard.requires_principal(req) else ""))
     if (confirm_code or "").strip().upper() != req.code:
         raise HTTPException(422, f"Para confirmar escribe el código exacto de la solicitud ({req.code})")
+    _verify_integrity(db, user, req)
+
+
+def _verify_integrity(db: Session, user: CurrentUser, req: ChangeRequest) -> None:
+    """Lo que se va a ejecutar debe ser exactamente lo aprobado, contra la misma base."""
+    current = guard.fingerprint(req)
+    approvals = [a for a in req.approvals if a.active and a.decision == "APPROVED"]
+    valid = {a.approver for a in approvals if a.content_hash and hmac.compare_digest(a.content_hash, current)}
+    if len(valid) >= max(1, req.connection.required_approvals) and len(valid) == len(approvals):
+        return
+    for a in req.approvals:
+        a.active = False
+    req.status = "PENDING_APPROVAL"
+    audit(db, user, "INTEGRITY_MISMATCH", "request", req.id,
+          detail="El SQL almacenado o la conexión destino cambiaron después de la aprobación")
+    db.commit()
+    raise HTTPException(409, "El SQL o la conexión destino cambiaron después de la aprobación: la solicitud volvió a "
+                             "'Pendiente de aprobación' y debe aprobarse de nuevo")
 
 
 def execute(db: Session, user: CurrentUser, req: ChangeRequest, confirm_code: str) -> dict:
@@ -299,13 +357,19 @@ def execute(db: Session, user: CurrentUser, req: ChangeRequest, confirm_code: st
     """
     _check_executable(db, user, req, confirm_code)
     conn = req.connection
+    if not conn.active:
+        raise HTTPException(409, "La conexión está desactivada; no se puede ejecutar")
     if not conn.allow_execution:
         raise HTTPException(409, "Esta conexión no permite ejecución desde DBA Manager; usa el script y marca como ejecutada")
     if not self_execution_enabled(db, user.username):
-        raise HTTPException(403, "No tienes activada la ejecución desde DBA Manager. Solo tú puedes activarla, "
-                                 "en tu perfil; mientras tanto usa el script y marca la solicitud como ejecutada")
+        raise HTTPException(403, "No tienes activada (o ya venció) la ejecución desde DBA Manager. Solo tú puedes "
+                                 "activarla, en tu perfil; mientras tanto usa el script y marca la solicitud como ejecutada")
     info = conn_info(conn, "exec", app_user=user.username)
     engine = engine_for(conn)
+    # Candado final contra el diccionario (además de la lista fija): nunca se ejecuta sobre esquemas internos
+    internal = engine.oracle_maintained(conn_info(conn, "catalog", user.username), schemas_of(req) - {"PUBLIC"})
+    if internal:
+        raise HTTPException(403, f"La solicitud afecta esquemas internos de Oracle ({', '.join(sorted(internal))}); no se ejecuta")
 
     previous_status = req.status
     locked = db.execute(

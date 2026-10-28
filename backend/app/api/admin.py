@@ -32,7 +32,7 @@ def _apply_connection(c: DbConnection, data: ConnectionIn) -> None:
     if (c.host, c.port, c.service_name) != (data.host, data.port, data.service_name):
         c.server_version = None  # otro servidor: se vuelve a detectar
     for f in ("name", "engine", "environment", "description", "host", "port", "service_name",
-              "catalog_user", "exec_user", "allow_execution", "required_approvals", "active"):
+              "catalog_user", "exec_user", "allow_execution", "use_tls", "required_approvals", "active"):
         setattr(c, f, getattr(data, f))
     c.environment = c.environment.upper()
     if data.catalog_password:
@@ -126,6 +126,8 @@ def list_scopes(db: Session = Depends(get_db), user: CurrentUser = Depends(requi
 @router.post("/scopes")
 def add_scope(data: ScopeIn, db: Session = Depends(get_db), user: CurrentUser = Depends(require_admin)):
     load_connection(db, data.connection_id, active_only=False)
+    if data.username == user.username:
+        raise HTTPException(403, "No puedes asignarte alcances de aprobación a ti mismo; pídeselo a otro administrador")
     s = ApproverScope(username=data.username, connection_id=data.connection_id,
                       schema_name=data.schema_name.strip().upper(), granted_by=user.username)
     db.add(s)
@@ -190,8 +192,8 @@ def set_user_roles(user_id: str, data: RolesIn, db: Session = Depends(get_db),
     if wanted - valid:
         raise HTTPException(422, f"Roles desconocidos: {', '.join(sorted(wanted - valid))}")
     target = keycloak_admin.get_user(user_id)
-    if target["username"] == user.username and "admin" not in wanted:
-        raise HTTPException(409, "No puedes quitarte tu propio rol admin (pídeselo a otro administrador)")
+    if target["username"] == user.username:
+        raise HTTPException(403, "No puedes cambiar tus propios roles; pídeselo a otro administrador")
     added, removed = keycloak_admin.set_roles(user_id, wanted)
     effective = keycloak_admin.user_roles(user_id)
     row = db.get(AppUser, target["username"])
@@ -238,8 +240,15 @@ def export_backup(db: Session = Depends(get_db), user: CurrentUser = Depends(req
 @router.post("/restore")
 async def import_backup(file: UploadFile = File(...), replace: bool = False, db: Session = Depends(get_db),
                         user: CurrentUser = Depends(require_admin)):
+    settings = get_settings()
+    if replace and not settings.metadata_restore_replace:
+        raise HTTPException(403, "Reemplazar la metadata existente está deshabilitado (METADATA_RESTORE_REPLACE=false): "
+                                 "borraría la bitácora actual. Solo se restaura sobre una metadata vacía")
+    raw = await file.read(settings.restore_max_mb * 1024 * 1024 + 1)
+    if len(raw) > settings.restore_max_mb * 1024 * 1024:
+        raise HTTPException(413, f"El respaldo excede {settings.restore_max_mb} MB (RESTORE_MAX_MB)")
     try:
-        data = json.loads(await file.read())
+        data = json.loads(raw)
         counts = backup.import_metadata(db, data, replace)
     except (ValueError, KeyError) as exc:
         db.rollback()
