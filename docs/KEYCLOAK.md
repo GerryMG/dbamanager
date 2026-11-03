@@ -2,6 +2,8 @@
 
 Esta guía usa solo la consola de **tu realm**: no necesitas el usuario `master`.
 
+Sirve para las dos versiones de DBA Manager (FastAPI y Quarkus). Donde hay diferencias, se indica.
+
 ## Qué necesitas
 
 Un usuario de tu realm con estos roles del cliente **`realm-management`** (los da quien administra tu realm):
@@ -25,6 +27,7 @@ https://<tu-keycloak>/admin/<tu-realm>/console/
 1. **Clients → Create client**.
 2. *Client type*: `OpenID Connect`. *Client ID*: `dbamanager-web`. Esto va en `KEYCLOAK_CLIENT_ID`. Clic en **Next**.
 3. *Client authentication*: **Off**. Es un cliente público, sin secreto.
+   - En la versión Quarkus también puedes ponerlo en **On** (cliente confidencial), porque el intercambio del código lo hace el servidor. En ese caso copia el secreto de la pestaña *Credentials* a `KEYCLOAK_CLIENT_SECRET`.
    - *Authentication flow*: marca solo **Standard flow**.
    - Desmarca *Direct access grants*.
    - Clic en **Next**.
@@ -32,8 +35,10 @@ https://<tu-keycloak>/admin/<tu-realm>/console/
    - *Root URL*: `https://dbamanager.empresa.com`
    - *Valid redirect URIs*: `https://dbamanager.empresa.com/*`
    - *Valid post logout redirect URIs*: `https://dbamanager.empresa.com/*`
-   - *Web origins*: `https://dbamanager.empresa.com`
+   - *Web origins*: `https://dbamanager.empresa.com` (lo usa la versión FastAPI, cuyo navegador llama a Keycloak directamente; en Quarkus no estorba)
 5. **Save**.
+
+En la versión Quarkus, `/*` cubre también `/reauth`, la ruta donde se vuelve a pedir la contraseña antes de registrar una llave de seguridad.
 
 > Para probar en tu máquina, agrega también `http://localhost:8080/*` en las URIs y `http://localhost:8080` en *Web origins*. Usa el puerto definido en `PORT`.
 
@@ -45,7 +50,7 @@ Recomendado en el realm (si tienes permiso, o pídeselo a quien lo administra):
 
 - **Realm settings → Security defenses → Brute force detection**: activado, para bloquear intentos repetidos de contraseña.
 - **Realm settings → Sessions**: una duración razonable de sesión (por ejemplo, 8 horas máximo y 30 minutos de inactividad).
-- **Realm settings → Tokens → Access Token Lifespan**: corto (por ejemplo, 5 minutos). La app lo renueva sola.
+- **Realm settings → Tokens → Access Token Lifespan**: corto (por ejemplo, 5 minutos). La app lo renueva sola: en FastAPI desde el navegador, en Quarkus desde el servidor.
 
 ## Paso 3. Hacer que el token sea "para" DBA Manager (audience)
 
@@ -107,6 +112,7 @@ Si prefieres no dar esos permisos, usa `KEYCLOAK_ROLES_ADMIN_MODE=off` y asigna 
 | `KEYCLOAK_CLIENT_ID` | Client ID del paso 1 | `dbamanager-web` |
 | `OIDC_AUDIENCE` | Paso 3 | `dbamanager-web` |
 | `KEYCLOAK_ROLES_SOURCE` | Paso 4 | `realm` o `client` |
+| `KEYCLOAK_CLIENT_SECRET` | Solo Quarkus con cliente confidencial (paso 1) | vacío |
 | `KEYCLOAK_INTERNAL_URL` | Solo si el servidor de DBA Manager llega a Keycloak por otra dirección | vacío |
 
 Comprobación rápida: abre `https://<KEYCLOAK_PUBLIC_URL>/realms/<KEYCLOAK_REALM>/.well-known/openid-configuration`. El campo `issuer` debe ser exactamente `<KEYCLOAK_PUBLIC_URL>/realms/<KEYCLOAK_REALM>`.
@@ -118,7 +124,7 @@ Al arrancar, DBA Manager revisa la configuración y muestra en su log `[OK]`, `[
 | Síntoma | Causa y solución |
 |---|---|
 | `[AVISO] El issuer de Keycloak es '...' pero DBA Manager espera '...'` | `KEYCLOAK_PUBLIC_URL` no coincide con la URL real (http/https, puerto, ruta). Cópiala del campo `issuer`, quitando `/realms/<realm>`. |
-| Keycloak muestra "Invalid parameter: redirect_uri" | Falta la URL de DBA Manager en *Valid redirect URIs* (paso 1). |
+| Keycloak muestra "Invalid parameter: redirect_uri" | Falta la URL de DBA Manager en *Valid redirect URIs* (paso 1). En Quarkus, revisa también que `APP_PUBLIC_URL` sea la dirección con la que entran los usuarios. |
 | Al entrar aparece "Token inválido: Invalid audience" | Falta el mapper del paso 3, o deja `OIDC_AUDIENCE=` vacío. |
 | Inicia sesión pero no ve menús de DBA/Administración | El usuario no tiene los roles (paso 5), o `KEYCLOAK_ROLES_SOURCE` / `ROLE_*` no coinciden con lo creado. Hay que cerrar sesión y volver a entrar después de asignarlos. |
 | En *Usuarios y roles*: "Tu usuario de Keycloak no tiene permisos…" | Falta el paso 6 para ese admin, o no volvió a iniciar sesión. |

@@ -1,6 +1,6 @@
 # DBA Manager — versión Quarkus
 
-La misma aplicación de DBA Manager, hecha completa en **Quarkus**. Un solo proyecto Java sirve la API y la interfaz web en el mismo puerto. La interfaz es JavaScript estándar servido por Quarkus, así que no hace falta Node ni ningún paso de compilación aparte.
+La misma aplicación de DBA Manager, hecha completa en **Quarkus**. La comparación con la versión FastAPI está en el [README principal](../README.md#dos-versiones). Un solo proyecto Java sirve la API y la interfaz web en el mismo puerto. La interfaz es JavaScript estándar servido por Quarkus, así que no hace falta Node ni ningún paso de compilación aparte.
 
 - **Exploración** de estructura de Oracle, solo con el diccionario de datos (nunca datos).
 - **Solicitudes** de cambios con las 28 operaciones visuales, importación de scripts SQL, vista previa del SQL y validación previa contra la base.

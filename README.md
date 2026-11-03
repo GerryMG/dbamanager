@@ -7,22 +7,41 @@ Explora la **estructura** de bases de datos Oracle (nunca los datos) y gestiona 
 
 Cada solicitud registra el motivo, el proyecto y la finalidad, y queda en una bitácora completa de quién pidió, aprobó y ejecutó.
 
+## Dos versiones
+
+El repositorio tiene dos implementaciones de la misma aplicación, con las mismas pantallas, operaciones y reglas. Elige una; no se usan juntas.
+
+| | Versión FastAPI | Versión Quarkus |
+|---|---|---|
+| Carpeta | raíz (`backend/`, `frontend/`) | [`quarkus/`](quarkus/README.md) |
+| Backend | Python 3.11+, FastAPI | Java 21, Quarkus |
+| Interfaz | React + Mantine, compilada con Node.js | HTML + JavaScript servidos por Quarkus, sin Node |
+| Sesión | Token en el navegador (`sessionStorage`) | Cookie cifrada del servidor; el navegador no ve los tokens |
+| Decisiones del DBA | Aprobación sellada con HMAC | Además, **firmadas con la llave de seguridad del DBA** (WebAuthn / FIDO2) |
+| Activar la ejecución propia | Escribiendo `ACTIVAR` | Firmando con su llave |
+| Migraciones de la metadata | Alembic | Flyway |
+| Driver de Oracle | `python-oracledb` (thin) | JDBC thin |
+| Configuración | [.env.example](.env.example) | [quarkus/.env.example](quarkus/.env.example) |
+
+Lo que sigue en este documento aplica a las dos, salvo donde se indica. Los detalles propios de Quarkus (llaves de seguridad, compilación e imagen) están en [quarkus/README.md](quarkus/README.md).
+
 ## Arquitectura
 
-Es **una sola aplicación**: el backend (FastAPI) sirve también la interfaz web (React) en el mismo puerto. Todo lo demás es externo y se configura con variables:
+En ambas versiones es **una sola aplicación**: el backend sirve también la interfaz web en el mismo puerto. Todo lo demás es externo y se configura con variables:
 
 | Componente | Descripción |
 |---|---|
-| DBA Manager | API `/api` (documentación en `/api/docs`) + interfaz web en `/`, puerto `PORT` |
-| Metadata | Oracle 12.1+ externo (`METADATA_DSN`), usuario **`DBAMGR`** con privilegios mínimos |
+| DBA Manager | API `/api` + interfaz web en `/`, puerto `PORT`. En FastAPI, documentación de la API en `/api/docs` (si `API_DOCS_ENABLED=true`); en Quarkus, salud en `/q/health` |
+| Metadata | Oracle 12.1+ externo (`METADATA_DSN`), usuario **`DBAMGR`** con privilegios mínimos. Cada versión usa su propio usuario de metadata |
 | Identidad | Keycloak / OIDC externo (`KEYCLOAK_*`) |
 | Bases administradas | Oracle 12.1+, una conexión por base (host/puerto/servicio), dadas de alta en la app |
 
 ```
-backend/    API, generación de SQL, flujo de aprobación (Python)
-frontend/   interfaz web (React + Mantine); se compila y la sirve el backend
-scripts/    arranque local (Linux/macOS y Windows)
-docs/       qué debe existir en Oracle y en Keycloak, y la guía de seguridad
+backend/    versión FastAPI: API, generación de SQL, flujo de aprobación (Python)
+frontend/   versión FastAPI: interfaz web (React + Mantine); se compila y la sirve el backend
+quarkus/    versión Quarkus completa (API e interfaz en un solo proyecto Java)
+scripts/    arranque local de la versión FastAPI (Linux/macOS y Windows)
+docs/       qué debe existir en Oracle y en Keycloak, y la guía de seguridad (ambas versiones)
 demo/       infraestructura opcional de prueba (Oracle y Keycloak en Docker)
 ```
 
@@ -38,7 +57,12 @@ Qué debe existir antes de arrancar:
 
 ## Configuración
 
-Copia `.env.example` a `.env` y completa los valores. **Todas** las variables están ahí, agrupadas y explicadas. Las variables de entorno del sistema tienen prioridad sobre `.env`.
+Copia el `.env.example` de la versión que uses a `.env` y completa los valores: el de la raíz para FastAPI, el de `quarkus/` para Quarkus. **Todas** las variables están ahí, agrupadas y explicadas. Las variables de entorno del sistema tienen prioridad sobre `.env`.
+
+La mayoría de las variables se llaman igual en las dos. Diferencias:
+
+- Solo FastAPI: `CORS_ORIGINS`, `API_DOCS_ENABLED`, `STATIC_DIR`, `OIDC_JWKS_URI`.
+- Solo Quarkus: `APP_PUBLIC_URL` (obligatoria: las llaves de seguridad quedan ligadas a ese dominio), `KEYCLOAK_CLIENT_SECRET` (si el cliente es confidencial) y `METADATA_POOL_SIZE`.
 
 Al arrancar, la app verifica la configuración y muestra en el log una línea por chequeo:
 - `[OK]`: conexión a la metadata, issuer y llaves de Keycloak correctos.
@@ -46,6 +70,22 @@ Al arrancar, la app verifica la configuración y muestra en el log una línea po
 - `[ERROR]`: falta la metadata o una variable obligatoria; la app no arranca.
 
 ## Correr en cualquier máquina (sin Docker)
+
+### Versión Quarkus
+
+Requisitos: **JDK 21** y **Maven 3.9+**. Desde `quarkus/`:
+
+```bash
+mvn package
+```
+
+```bash
+java -jar target/quarkus-app/quarkus-run.jar
+```
+
+El segundo comando se ejecuta desde la carpeta donde está tu `.env`. Más detalles e imagen de contenedor en [quarkus/README.md](quarkus/README.md).
+
+### Versión FastAPI
 
 Requisitos: **Python 3.11+** y **Node.js 24.22.1+** (o 22.23.4+ / 26.12.1+; el script rechaza versiones sin los parches de seguridad vigentes). Los servidores de metadata, Keycloak y bases deben ser accesibles desde esa máquina.
 
@@ -82,6 +122,11 @@ Copy-Item .env.example .env
 | `dba_admin` | Aprobar/ejecutar cualquier solicitud |
 | `admin` | Conexiones, usuarios y roles, alcances, proyectos, respaldos |
 
+En la versión Quarkus, además:
+
+- un `dba` o `dba_admin` solo decide con su **llave de seguridad registrada y avalada**;
+- los alcances de DBAs los otorga un `dba_admin` firmando con su llave (no el rol `admin`).
+
 - Quien solicita nunca aprueba lo suyo. Un admin no puede cambiar sus propios roles ni asignarse alcances.
 - SQL personalizado, código PL/SQL, creación de usuarios y sinónimos públicos solo los aprueba y ejecuta un `dba_admin`.
 - Nunca se aceptan solicitudes sobre esquemas internos de Oracle, las cuentas de servicio ni la metadata.
@@ -91,9 +136,11 @@ Copy-Item .env.example .env
 
 Ejecutar desde la app (con la cuenta privilegiada) viene **desactivado para todos**:
 
-- **Solo el propio DBA puede activarlo para sí mismo**, desde el menú de su usuario → *Ejecución desde la app*, escribiendo `ACTIVAR`.
+- **Solo el propio DBA puede activarlo para sí mismo**:
+  - FastAPI: desde el menú de su usuario → *Ejecución desde la app*, escribiendo `ACTIVAR`;
+  - Quarkus: desde *Mi llave*, firmando con su llave de seguridad.
 - Para activarlo debe haber iniciado sesión hace poco (`REAUTH_MINUTES`). Se desactiva solo después de `SELF_EXECUTION_HOURS`.
-- Cada aprobación sella el SQL y la base destino: si algo cambia después de aprobar, no se ejecuta y hay que volver a aprobar.
+- Cada aprobación sella el SQL y la base destino: si algo cambia después de aprobar, no se ejecuta y hay que volver a aprobar. En Quarkus, también se verifica la firma de cada aprobación con la llave del DBA.
 - No existe forma de que otra persona lo active por él, ni siquiera un admin.
 - Al restaurar un respaldo de metadata, vuelve a quedar desactivado para todos.
 - Cada activación o desactivación queda en la bitácora.
@@ -153,22 +200,32 @@ Lo que no tiene formulario (subparticiones, índices globales particionados, `CR
 | Tipo `BOOLEAN` | 23ai | Se bloquea y se sugiere `NUMBER(1)`/`CHAR(1)` + `CHECK` |
 
   El editor tampoco ofrece tipos de dato que la versión no tiene.
-- Probado en vivo contra **Oracle 23ai** (DEVPDB/PRODPDB) y **Oracle 18c XE**. Las reglas de 12.1 y 12.2 se verificaron con conexiones de versión simulada; no existe imagen gratuita de 12c para pruebas en vivo.
+- Las dos versiones se probaron en vivo contra **Oracle 23ai** (DEVPDB/PRODPDB) y **Oracle 18c XE**. En la versión FastAPI, las reglas de 12.1 y 12.2 se verificaron además con conexiones de versión simulada; no existe imagen gratuita de 12c para pruebas en vivo.
 - Para repetir la prueba en 18c: `docker compose -f demo/docker-compose.yml --env-file .env --profile compat up -d oracle18`.
 - En 12.1.0.1 no existe `READ ANY TABLE`: donde la guía lo pide, se usa `SELECT ANY TABLE` (ver [docs/ORACLE.md](docs/ORACLE.md)).
-- El driver `python-oracledb` en modo *thin* soporta servidores 12.1+. Si una cuenta solo tiene verificador de contraseña 10G (muy antiguo), hay que restablecer su contraseña.
+- Ambas versiones usan drivers *thin* (`python-oracledb` en FastAPI, JDBC thin en Quarkus) que soportan servidores 12.1+. Si una cuenta solo tiene verificador de contraseña 10G (muy antiguo), hay que restablecer su contraseña.
 
 ## Metadata: migraciones y respaldo
 
-- El esquema de la metadata se versiona con **Alembic** (`backend/migrations`) y se actualiza solo al arrancar.
+- El esquema de la metadata se versiona y se actualiza solo al arrancar:
+  - FastAPI: **Alembic** (`backend/migrations`);
+  - Quarkus: **Flyway** (`quarkus/src/main/resources/db/migration`, tabla de versión `DBAMGR_SCHEMA_HISTORY`).
+- Las tablas tienen los mismos nombres en las dos versiones: cada una necesita **su propio usuario de metadata**.
 - **Respaldo y migración:** Administración → *Respaldo de metadata* descarga o restaura un JSON portable con toda la metadata.
   - Las contraseñas de conexiones van cifradas: para restaurar se necesita la misma `SECRETS_KEY`.
   - Solo restaura sobre metadata vacía, salvo que se active "reemplazar".
+  - Cada versión restaura sus propios respaldos. El de Quarkus incluye además las llaves públicas y las firmas de los DBAs.
 - También puedes respaldar el esquema `DBAMGR` con las herramientas habituales de Oracle (Data Pump).
 
 ## Desarrollo
 
-Con recarga automática, en dos terminales. Primero el backend (puerto 8080):
+**Quarkus**, con recarga automática de API e interfaz, desde `quarkus/`:
+
+```bash
+mvn quarkus:dev
+```
+
+**FastAPI**, con recarga automática, en dos terminales. Primero el backend (puerto 8080):
 
 ```bash
 cd backend && .venv/bin/uvicorn app.main:app --reload --port 8080
@@ -184,7 +241,7 @@ Agrega `http://localhost:5173` en `CORS_ORIGINS` y en las URLs del cliente de Ke
 
 ## Infraestructura de demostración (opcional)
 
-`demo/docker-compose.yml` levanta un Oracle 23ai (metadata y bases de ejemplo DEVPDB/PRODPDB) y un Keycloak con usuarios de prueba. Sirve para probar sin servidores propios:
+`demo/docker-compose.yml` levanta un Oracle 23ai (metadata y bases de ejemplo DEVPDB/PRODPDB) y un Keycloak con usuarios de prueba. Sirve para probar cualquiera de las dos versiones sin servidores propios (para Quarkus, usa otro `METADATA_USER`):
 
 ```bash
 docker compose -f demo/docker-compose.yml --env-file .env up -d
