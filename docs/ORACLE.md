@@ -10,6 +10,8 @@ DBA Manager trabaja con dos tipos de bases Oracle (12.1 o superior):
 Qué ejecuta DBA Manager en cada una:
 
 - **En la metadata:** solo trabaja con sus propias tablas, dentro de su usuario. Las crea al instalarse y las actualiza al cambiar de versión.
+  - Los privilegios son los mismos para la versión FastAPI y la versión Quarkus.
+  - Si usas las dos, cada una necesita **su propio usuario de metadata** (por ejemplo `DBAMGR` y `DBAMGRQ`): sus tablas tienen los mismos nombres. Las cuentas de catálogo y ejecutora de las bases administradas sí pueden compartirse.
 - **En las bases administradas:** solo **lee el diccionario de datos** (estructura, nunca datos), y aplica cambios **únicamente** cuando un DBA ejecuta una solicitud aprobada con la ejecución activada. Fuera de eso no ejecuta nada.
 
 ---
